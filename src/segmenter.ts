@@ -30,44 +30,60 @@ export function isAutoLap(laps: LapSummary[]): boolean {
     .map((l) => l.totalDistance);
   if (distances.length < 3) return false;
 
-  // Check if most laps are close to 1km (or 1 mile = 1609m)
   const near1k = distances.filter((d) => d > 850 && d < 1150).length;
   const near1mi = distances.filter((d) => d > 1500 && d < 1720).length;
 
-  // If >70% of laps are same-ish distance, it's auto-lap
   const threshold = distances.length * 0.7;
   if (near1k >= threshold || near1mi >= threshold) return true;
 
-  // Also check coefficient of variation — very uniform = auto-lap
   const mean = distances.reduce((s, d) => s + d, 0) / distances.length;
   const std = Math.sqrt(
     distances.reduce((s, d) => s + (d - mean) ** 2, 0) / distances.length
   );
-  const cv = std / mean;
-  return cv < 0.08;
+  return std / mean < 0.08;
 }
 
 /**
- * Detect effort segments from record-level data by finding sustained
- * pace changes. Uses a smoothed speed signal and a state machine that
- * starts a new segment when pace shifts significantly and holds.
+ * Detect effort segments from record-level data, but only keep them
+ * if they form a consistent repeating pattern (e.g., intervals with
+ * similar fast/slow durations) or a clear warmup/effort/cooldown shape.
+ *
+ * Random one-off pace wobbles are NOT segmented.
  */
 export function detectEffortSegments(records: RecordPoint[]): EffortSegment[] {
-  if (records.length < 20) return [];
+  if (records.length < 60) return [];
 
-  // 1. Smooth speed with a rolling window (~20s at 1 record/s)
-  const windowSize = 15;
+  // 1. Smooth speed signal
   const smoothed = smoothSignal(
     records.map((r) => r.speed ?? 0),
-    windowSize
+    15
   );
 
-  // 2. Find change points using a threshold-based state machine
-  const PACE_THRESHOLD = 0.25; // m/s change (~15s/km at 5:00 pace) to trigger new segment
-  const MIN_SEGMENT_DURATION = 45; // seconds — ignore shorter blips
-  const MIN_SEGMENT_RECORDS = 20;
+  // 2. Find raw change points
+  const rawSegments = findChangePoints(smoothed, records);
+  if (rawSegments.length <= 1) return [];
 
-  const changePoints: number[] = [0]; // always start at 0
+  // 3. Merge adjacent segments with similar pace
+  const merged = mergeSmallSegments(rawSegments);
+  if (merged.length <= 1) return [];
+
+  // 4. Validate: only keep if segments form a consistent pattern
+  if (hasConsistentPattern(merged)) {
+    return merged;
+  }
+
+  return [];
+}
+
+function findChangePoints(
+  smoothed: number[],
+  records: RecordPoint[]
+): EffortSegment[] {
+  const PACE_THRESHOLD = 0.3; // m/s (~18s/km at 5:00 pace)
+  const MIN_RECORDS = 25;
+  const MIN_DURATION = 50; // seconds
+
+  const changePoints: number[] = [0];
   let segSum = smoothed[0];
   let segCount = 1;
 
@@ -75,19 +91,18 @@ export function detectEffortSegments(records: RecordPoint[]): EffortSegment[] {
     const segAvg = segSum / segCount;
     const diff = Math.abs(smoothed[i] - segAvg);
 
-    // Check if we've sustained a deviation for enough records
     if (diff > PACE_THRESHOLD) {
-      // Look ahead to confirm it's sustained
+      // Confirm sustained: look ahead 12 records
       let sustained = true;
-      const lookAhead = Math.min(i + 10, smoothed.length);
+      const lookAhead = Math.min(i + 12, smoothed.length);
       for (let j = i; j < lookAhead; j++) {
-        if (Math.abs(smoothed[j] - segAvg) < PACE_THRESHOLD * 0.5) {
+        if (Math.abs(smoothed[j] - segAvg) < PACE_THRESHOLD * 0.4) {
           sustained = false;
           break;
         }
       }
 
-      if (sustained && segCount >= MIN_SEGMENT_RECORDS) {
+      if (sustained && segCount >= MIN_RECORDS) {
         changePoints.push(i);
         segSum = smoothed[i];
         segCount = 1;
@@ -99,7 +114,7 @@ export function detectEffortSegments(records: RecordPoint[]): EffortSegment[] {
     segCount++;
   }
 
-  // 3. Build segments from change points
+  // Build segments from change points
   const segments: EffortSegment[] = [];
   for (let s = 0; s < changePoints.length; s++) {
     const startIdx = changePoints[s];
@@ -107,7 +122,7 @@ export function detectEffortSegments(records: RecordPoint[]): EffortSegment[] {
       s + 1 < changePoints.length ? changePoints[s + 1] : records.length;
     const segRecords = records.slice(startIdx, endIdx);
 
-    if (segRecords.length < MIN_SEGMENT_RECORDS) continue;
+    if (segRecords.length < MIN_RECORDS) continue;
 
     const elapsed =
       segRecords.length > 1
@@ -116,14 +131,91 @@ export function detectEffortSegments(records: RecordPoint[]): EffortSegment[] {
           1000
         : 0;
 
-    if (elapsed < MIN_SEGMENT_DURATION) continue;
+    if (elapsed < MIN_DURATION) continue;
 
-    const seg = summarizeRecords(segRecords, segments.length + 1, elapsed);
-    segments.push(seg);
+    segments.push(summarizeRecords(segRecords, segments.length + 1, elapsed));
   }
 
-  // 4. Merge very similar adjacent segments (within 5% speed)
-  return mergeSmallSegments(segments);
+  return segments;
+}
+
+/**
+ * Validate that detected segments form a consistent, repeating pattern.
+ *
+ * Accepts:
+ * 1. Interval pattern: >= 2 fast reps with similar pace AND duration,
+ *    interleaved with recovery segments.
+ * 2. Tempo/threshold: warmup + sustained block (>= 40% of time) + cooldown,
+ *    where the sustained block is clearly faster than bookends.
+ */
+function hasConsistentPattern(segments: EffortSegment[]): boolean {
+  if (segments.length < 3) return false;
+
+  // Classify each segment as fast or slow relative to median speed
+  const speeds = segments.map((s) => s.avgSpeed ?? 0).filter((s) => s > 0);
+  if (speeds.length < 3) return false;
+
+  const sorted = [...speeds].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+
+  const fast = segments.filter(
+    (s) => (s.avgSpeed ?? 0) > median * 1.03
+  );
+  const slow = segments.filter(
+    (s) => (s.avgSpeed ?? 0) <= median * 0.97
+  );
+
+  // --- Check interval pattern ---
+  if (fast.length >= 2 && slow.length >= 1) {
+    const fastSpeeds = fast.map((s) => s.avgSpeed!);
+    const fastDurations = fast.map((s) => s.totalElapsedTime);
+
+    const speedCV = cv(fastSpeeds);
+    const durationCV = cv(fastDurations);
+
+    // Fast reps should be consistent: pace within 10%, duration within 40%
+    if (speedCV < 0.10 && durationCV < 0.40) {
+      return true;
+    }
+  }
+
+  // --- Check tempo pattern ---
+  // Look for a contiguous block of faster segments in the middle
+  const totalTime = segments.reduce((s, seg) => s + seg.totalElapsedTime, 0);
+  let bestBlockTime = 0;
+  let bestBlockStart = -1;
+  let blockTime = 0;
+  let blockStart = 0;
+
+  for (let i = 0; i < segments.length; i++) {
+    if ((segments[i].avgSpeed ?? 0) > median * 1.02) {
+      if (blockTime === 0) blockStart = i;
+      blockTime += segments[i].totalElapsedTime;
+      if (blockTime > bestBlockTime) {
+        bestBlockTime = blockTime;
+        bestBlockStart = blockStart;
+      }
+    } else {
+      blockTime = 0;
+    }
+  }
+
+  // Sustained block covers >= 40% of total time and starts after at least 1 segment
+  if (bestBlockTime >= totalTime * 0.35 && bestBlockStart >= 1) {
+    return true;
+  }
+
+  return false;
+}
+
+function cv(arr: number[]): number {
+  if (arr.length < 2) return 0;
+  const m = arr.reduce((s, v) => s + v, 0) / arr.length;
+  if (m === 0) return 0;
+  const std = Math.sqrt(
+    arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length
+  );
+  return std / m;
 }
 
 function smoothSignal(data: number[], windowSize: number): number[] {
@@ -151,7 +243,9 @@ function summarizeRecords(
 ): EffortSegment {
   const avg = (vals: (number | undefined)[]) => {
     const valid = vals.filter((v): v is number => v != null && v > 0);
-    return valid.length > 0 ? valid.reduce((s, v) => s + v, 0) / valid.length : undefined;
+    return valid.length > 0
+      ? valid.reduce((s, v) => s + v, 0) / valid.length
+      : undefined;
   };
   const max = (vals: (number | undefined)[]) => {
     const valid = vals.filter((v): v is number => v != null);
@@ -185,7 +279,7 @@ function summarizeRecords(
   };
 }
 
-/** Merge adjacent segments with similar pace to avoid over-segmentation */
+/** Merge adjacent segments with similar pace */
 function mergeSmallSegments(segments: EffortSegment[]): EffortSegment[] {
   if (segments.length <= 1) return segments;
 
@@ -198,13 +292,11 @@ function mergeSmallSegments(segments: EffortSegment[]): EffortSegment[] {
     const prevSpeed = prev.avgSpeed ?? 0;
     const currSpeed = curr.avgSpeed ?? 0;
 
-    // Merge if speeds are within 5% of each other
     if (
       prevSpeed > 0 &&
       currSpeed > 0 &&
       Math.abs(currSpeed - prevSpeed) / prevSpeed < 0.05
     ) {
-      // Combine into previous
       const totalTime = prev.totalElapsedTime + curr.totalElapsedTime;
       const w1 = prev.totalElapsedTime / totalTime;
       const w2 = curr.totalElapsedTime / totalTime;
@@ -237,7 +329,6 @@ function mergeSmallSegments(segments: EffortSegment[]): EffortSegment[] {
     }
   }
 
-  // Re-index
   merged.forEach((s, i) => (s.lapIndex = i + 1));
   return merged;
 }
@@ -252,8 +343,6 @@ export function getEffortSegments(
 ): EffortSegment[] {
   if (isAutoLap(laps) && records.length >= 60) {
     const detected = detectEffortSegments(records);
-    // Only use detected segments if we found a meaningful structure
-    // (more than 1 segment = actual effort changes found)
     if (detected.length > 1) {
       return detected;
     }
