@@ -6,11 +6,12 @@ import DynamicsCharts from "./components/DynamicsCharts";
 import ActivityList from "./components/ActivityList";
 import HRComparison from "./components/HRComparison";
 import PaceComparison from "./components/PaceComparison";
+import FitnessDashboard from "./components/FitnessDashboard";
 import { parseFitFile } from "./parseFit";
 import type { ParsedActivity, WorkoutType } from "./types";
 import { WORKOUT_LABELS, WORKOUT_COLORS } from "./types";
 
-type View = "library" | "detail" | "compare" | "pace";
+type View = "library" | "detail" | "compare" | "pace" | "fitness";
 
 function App() {
   const [activities, setActivities] = useState<ParsedActivity[]>([]);
@@ -123,6 +124,16 @@ function App() {
               >
                 Pace Segments
               </button>
+              <button
+                onClick={() => setView("fitness")}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  view === "fitness"
+                    ? "bg-white text-gray-900 shadow-sm"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Fitness
+              </button>
             </nav>
           )}
         </div>
@@ -216,6 +227,11 @@ function App() {
         {/* Pace comparison view */}
         {!loading && view === "pace" && activities.length > 0 && (
           <PaceComparison activities={activities} />
+        )}
+
+        {/* Fitness dashboard */}
+        {!loading && view === "fitness" && activities.length > 0 && (
+          <FitnessDashboard activities={activities} />
         )}
       </main>
     </div>
