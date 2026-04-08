@@ -59,6 +59,17 @@ export function detectWorkoutType(
   const speeds = meaningful.map((l) => l.avgSpeed!);
   const cv = coefficientOfVariation(speeds);
 
+  // --- Zone-based classification first: HR is the most reliable signal ---
+  const z2 = getZ2Ceiling();
+  const zones = getZones(z2);
+  const lapsWithHR = meaningful.filter((l) => l.avgHeartRate != null);
+
+  if (lapsWithHR.length >= 2) {
+    const zoneType = classifyByZone(meaningful, zones);
+    // If HR clearly says easy, trust it over pace patterns
+    if (zoneType === "easy") return "easy";
+  }
+
   // --- Intervals: need actual pace alternation, not just uniform laps ---
   if (cv > 0.12 && meaningful.length >= 4 && hasAlternatingPattern(speeds)) {
     return "intervals";
@@ -69,11 +80,7 @@ export function detectWorkoutType(
     return "progressive";
   }
 
-  // --- Zone-based classification for steady/non-alternating runs ---
-  const z2 = getZ2Ceiling();
-  const zones = getZones(z2);
-
-  const lapsWithHR = meaningful.filter((l) => l.avgHeartRate != null);
+  // --- Zone-based for non-easy types ---
   if (lapsWithHR.length >= 2) {
     return classifyByZone(meaningful, zones);
   }

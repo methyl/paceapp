@@ -42,16 +42,30 @@ export async function parseFitFile(
 
   let lapIndex = 0;
   for (const lap of fitLaps) {
+    // Prefer timer_time (moving time) over elapsed_time (includes pauses)
+    const lapTime = lap.total_timer_time ?? lap.total_elapsed_time ?? 0;
+    const lapDist = lap.total_distance ?? 0;
+
+    // Compute speed from distance/time as sanity check.
+    // FIT avg_speed can be wrong (e.g., includes pause time in calculation).
+    const rawSpeed = lap.avg_speed ?? lap.enhanced_avg_speed ?? 0;
+    const computedSpeed = lapTime > 0 ? lapDist / lapTime : 0;
+    // Use computed speed if the FIT value looks implausible (>50% off)
+    const avgSpeed =
+      computedSpeed > 0 && rawSpeed > 0 && Math.abs(rawSpeed - computedSpeed) / computedSpeed > 0.5
+        ? computedSpeed
+        : rawSpeed || computedSpeed;
+
     const lapSummary: LapSummary = {
       lapIndex: lapIndex + 1,
       startTime: lap.start_time,
-      totalDistance: lap.total_distance ?? 0,
-      totalElapsedTime: lap.total_elapsed_time ?? 0,
+      totalDistance: lapDist,
+      totalElapsedTime: lapTime,
       avgHeartRate: lap.avg_heart_rate,
       maxHeartRate: lap.max_heart_rate,
       avgCadence: lap.avg_cadence != null ? lap.avg_cadence * 2 : undefined,
-      avgSpeed: lap.avg_speed ?? lap.enhanced_avg_speed,
-      avgPace: speedToPace(lap.avg_speed ?? lap.enhanced_avg_speed ?? 0),
+      avgSpeed,
+      avgPace: speedToPace(avgSpeed),
       avgVerticalOscillation: lap.avg_vertical_oscillation,
       avgGroundContactTime: lap.avg_stance_time,
       avgGroundContactTimeBalance: lap.avg_stance_time_balance,
@@ -117,7 +131,7 @@ export async function parseFitFile(
     sport: session?.sport,
     startTime: startTime,
     totalDistance: session?.total_distance ?? 0,
-    totalElapsedTime: session?.total_elapsed_time ?? 0,
+    totalElapsedTime: session?.total_timer_time ?? session?.total_elapsed_time ?? 0,
     avgHeartRate: session?.avg_heart_rate,
     avgCadence: session?.avg_cadence != null ? session.avg_cadence * 2 : undefined,
     avgSpeed,
