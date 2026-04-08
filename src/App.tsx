@@ -8,7 +8,7 @@ import HRComparison from "./components/HRComparison";
 import PaceComparison from "./components/PaceComparison";
 import FitnessDashboard from "./components/FitnessDashboard";
 import SegmentHistory from "./components/SegmentHistory";
-import { parseFitFile } from "./parseFit";
+import { parseFitFile, reprocessActivity } from "./parseFit";
 import { loadActivities, saveActivities, clearActivities } from "./storage";
 import { getZ2Ceiling, setZ2Ceiling } from "./detectWorkout";
 import type { ParsedActivity, WorkoutType } from "./types";
@@ -27,11 +27,13 @@ function App() {
   const [showOriginalLaps, setShowOriginalLaps] = useState(false);
   const [z2, setZ2] = useState(getZ2Ceiling);
 
-  // Load from IndexedDB on mount
+  // Load from IndexedDB on mount, re-run segmentation with latest algorithm
   useEffect(() => {
     loadActivities()
       .then((stored) => {
-        if (stored.length > 0) setActivities(stored);
+        if (stored.length > 0) {
+          setActivities(stored.map(reprocessActivity));
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));

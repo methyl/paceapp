@@ -1,7 +1,7 @@
 import type { ParsedActivity } from "./types";
 
 const DB_NAME = "paceapp";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = "activities";
 
 function openDB(): Promise<IDBDatabase> {
@@ -9,9 +9,11 @@ function openDB(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: "fileName" });
+      // Drop old store on version upgrade to force re-import
+      if (db.objectStoreNames.contains(STORE_NAME)) {
+        db.deleteObjectStore(STORE_NAME);
       }
+      db.createObjectStore(STORE_NAME, { keyPath: "fileName" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

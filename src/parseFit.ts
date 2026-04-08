@@ -146,4 +146,18 @@ export async function parseFitFile(
   };
 }
 
+/** Re-run segmentation and workout detection on a cached activity */
+export function reprocessActivity(a: ParsedActivity): ParsedActivity {
+  const effortSegments = getEffortSegments(a.laps, a.records);
+  const segmentsDetected = effortSegments.length > 0 && effortSegments[0].detected;
+  const workoutType = detectWorkoutType(a.summary, segmentsDetected ? effortSegments : a.laps);
+
+  return {
+    ...a,
+    segments: effortSegments,
+    segmentsDetected,
+    workoutType,
+  };
+}
+
 export { speedToPace, formatTime };
