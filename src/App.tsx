@@ -22,6 +22,7 @@ function App() {
   const [loadProgress, setLoadProgress] = useState({ done: 0, total: 0 });
   const [error, setError] = useState("");
   const [filterType, setFilterType] = useState<WorkoutType | "all">("all");
+  const [showOriginalLaps, setShowOriginalLaps] = useState(false);
 
   // Load from IndexedDB on mount
   useEffect(() => {
@@ -246,8 +247,25 @@ function App() {
               </span>
             </div>
             <Summary summary={selected.summary} />
-            <LapTable laps={selected.laps} />
-            <DynamicsCharts laps={selected.laps} records={selected.records} />
+            {selected.segmentsDetected && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-blue-800 text-sm">
+                Auto-laps detected — showing {selected.segments.length} effort segments based on pace changes.
+                <button
+                  onClick={() => setShowOriginalLaps((v) => !v)}
+                  className="ml-2 text-blue-600 underline text-xs"
+                >
+                  {showOriginalLaps ? "Show effort segments" : "Show original laps"}
+                </button>
+              </div>
+            )}
+            <LapTable
+              laps={selected.segmentsDetected && !showOriginalLaps ? selected.segments : selected.laps}
+              title={selected.segmentsDetected && !showOriginalLaps ? "Effort Segments" : "Segments / Laps"}
+            />
+            <DynamicsCharts
+              laps={selected.segmentsDetected && !showOriginalLaps ? selected.segments : selected.laps}
+              records={selected.records}
+            />
           </>
         )}
 

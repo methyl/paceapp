@@ -3,9 +3,10 @@ import { formatTime } from "../parseFit";
 
 interface LapTableProps {
   laps: LapSummary[];
+  title?: string;
 }
 
-export default function LapTable({ laps }: LapTableProps) {
+export default function LapTable({ laps, title }: LapTableProps) {
   if (laps.length === 0) return null;
 
   const hasVO = laps.some((l) => l.avgVerticalOscillation != null);
@@ -17,7 +18,7 @@ export default function LapTable({ laps }: LapTableProps) {
 
   return (
     <div>
-      <h2 className="text-xl font-bold text-gray-900 mb-4">Segments / Laps</h2>
+      <h2 className="text-xl font-bold text-gray-900 mb-4">{title ?? "Segments / Laps"}</h2>
       <div className="overflow-x-auto rounded-lg border border-gray-200">
         <table className="min-w-full text-sm">
           <thead>

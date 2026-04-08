@@ -83,5 +83,9 @@ export interface ParsedActivity {
   workoutType: WorkoutType;
   summary: ActivitySummary;
   laps: LapSummary[];
+  /** Effort-based segments: detected from pace changes if auto-lap, otherwise same as laps */
+  segments: LapSummary[];
+  /** Whether segments were auto-detected from record data */
+  segmentsDetected: boolean;
   records: RecordPoint[];
 }

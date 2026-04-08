@@ -124,7 +124,10 @@ export default function ActivityList({
                     ? `${Math.round(a.summary.avgHeartRate)} bpm`
                     : "-"}
                 </td>
-                <td className="px-3 py-2.5">{a.laps.length}</td>
+                <td className="px-3 py-2.5">
+                  {a.segments.length}
+                  {a.segmentsDetected && <span className="text-gray-400 text-xs ml-1">detected</span>}
+                </td>
               </tr>
             ))}
           </tbody>

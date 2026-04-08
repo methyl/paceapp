@@ -1,5 +1,6 @@
 import FitParser from "fit-file-parser";
 import { detectWorkoutType } from "./detectWorkout";
+import { getEffortSegments } from "./segmenter";
 import type { ParsedActivity, LapSummary, RecordPoint, ActivitySummary } from "./types";
 
 function speedToPace(speedMps: number): string {
@@ -127,7 +128,11 @@ export async function parseFitFile(
     avgPower: session?.avg_power,
   };
 
-  const workoutType = detectWorkoutType(summary, laps);
+  const effortSegments = getEffortSegments(laps, records);
+  const segmentsDetected = effortSegments.length > 0 && effortSegments[0].detected;
+
+  // Use effort segments for workout detection — they reflect actual effort changes
+  const workoutType = detectWorkoutType(summary, segmentsDetected ? effortSegments : laps);
 
   return {
     id: `${fileName}-${++idCounter}`,
@@ -135,6 +140,8 @@ export async function parseFitFile(
     workoutType,
     summary,
     laps,
+    segments: effortSegments,
+    segmentsDetected,
     records,
   };
 }

@@ -92,12 +92,13 @@ export function computeSegmentEFs(activities: ParsedActivity[]): SegmentEF[] {
         })
       : a.fileName;
 
-    for (let i = 0; i < a.laps.length; i++) {
-      const lap = a.laps[i];
+    const segs = a.segments;
+    for (let i = 0; i < segs.length; i++) {
+      const lap = segs[i];
       if (!lap.avgSpeed || lap.avgSpeed <= 0 || !lap.avgHeartRate) continue;
       if (lap.totalDistance < 200) continue;
 
-      const prior = computePriorLoad(a.laps, i);
+      const prior = computePriorLoad(segs, i);
 
       segments.push({
         activityId: a.id,
@@ -105,7 +106,7 @@ export function computeSegmentEFs(activities: ParsedActivity[]): SegmentEF[] {
         dateStr,
         workoutType: a.workoutType,
         lapIndex: i + 1,
-        totalLaps: a.laps.length,
+        totalLaps: segs.length,
         ef: efficiencyFactor(lap.avgSpeed, lap.avgHeartRate),
         speed: lap.avgSpeed,
         hr: lap.avgHeartRate,
@@ -167,7 +168,7 @@ export function computeActivityEFs(activities: ParsedActivity[]): ActivityEF[] {
           ? loadedSegs.reduce((s, l) => s + l.ef, 0) / loadedSegs.length
           : null;
 
-      const lapEFs = a.laps
+      const lapEFs = a.segments
         .filter((l) => l.avgSpeed && l.avgHeartRate)
         .map((l) => ({
           lapIndex: l.lapIndex,

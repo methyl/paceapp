@@ -95,16 +95,16 @@ function findMatchingSegments(
   const maxPace = targetPace + tolerance;
 
   for (const a of activities) {
-    for (let i = 0; i < a.laps.length; i++) {
-      const lap = a.laps[i];
+    for (let i = 0; i < a.segments.length; i++) {
+      const lap = a.segments[i];
       if (!lap.avgSpeed || lap.avgSpeed <= 0 || lap.avgHeartRate == null) continue;
       if (lap.totalDistance < 200) continue; // skip tiny segments
 
       const secPerKm = 1000 / lap.avgSpeed;
       if (secPerKm < minPace || secPerKm > maxPace) continue;
 
-      const prior = computePriorLoad(a.laps, i);
-      const relPos = a.laps.length > 1 ? i / (a.laps.length - 1) : 0;
+      const prior = computePriorLoad(a.segments, i);
+      const relPos = a.segments.length > 1 ? i / (a.segments.length - 1) : 0;
 
       let positionLabel: string;
       if (relPos < 0.2) positionLabel = "Start";
@@ -127,7 +127,7 @@ function findMatchingSegments(
         workoutLabel: WORKOUT_LABELS[a.workoutType],
         workoutColor: WORKOUT_COLORS[a.workoutType],
         lapIndex: i + 1,
-        totalLaps: a.laps.length,
+        totalLaps: a.segments.length,
         relativePosition: relPos,
         positionLabel,
         pace: Math.round(secPerKm),
@@ -159,7 +159,7 @@ function findMatchingSegments(
 function suggestPaces(activities: ParsedActivity[]): number[] {
   const paces: number[] = [];
   for (const a of activities) {
-    for (const lap of a.laps) {
+    for (const lap of a.segments) {
       if (lap.avgSpeed && lap.avgSpeed > 0 && lap.totalDistance > 200) {
         paces.push(Math.round(1000 / lap.avgSpeed));
       }
