@@ -82,8 +82,8 @@ function findChangePoints(
   records: RecordPoint[]
 ): EffortSegment[] {
   const PACE_THRESHOLD = 0.4; // m/s (~25s/km at 5:00 pace)
-  const MIN_RECORDS = 60; // ~1 min at 1Hz
-  const MIN_DURATION = 90; // seconds
+  const MIN_RECORDS = 30; // ~30s at 1Hz — short fast reps are valid
+  const MIN_DURATION = 90; // seconds (overridden by distance >= 200m)
 
   const changePoints: number[] = [0];
   let segSum = smoothed[0];
@@ -130,7 +130,12 @@ function findChangePoints(
           1000
         : 0;
 
-    if (elapsed < MIN_DURATION || segRecords.length < MIN_RECORDS) continue;
+    const firstDist = segRecords[0].distance ?? 0;
+    const lastDist = segRecords[segRecords.length - 1].distance ?? 0;
+    const dist = lastDist - firstDist;
+
+    // Keep if substantial by time OR by distance
+    if (elapsed < MIN_DURATION && dist < 200) continue;
 
     segments.push(summarizeRecords(segRecords, segments.length + 1, elapsed));
   }
