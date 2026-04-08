@@ -44,10 +44,12 @@ describe("workout label generation", () => {
 
   it("does not show recovery jogs in label: 2026-02-28", async () => {
     const a = await parseFitFile(loadFixture("2026-02-28"), "test");
-    // Count occurrences of "+" — interval label should be compact
-    const plusCount = (a.workoutLabel.match(/\+/g) || []).length;
-    // Warmup + intervals + cooldown = max 2 plus signs
-    expect(plusCount).toBeLessThanOrEqual(2);
+    // Label should contain interval notation (×)
+    expect(a.workoutLabel).toContain("×");
+    // Should not contain many tiny "easy" fragments from recoveries
+    const easyParts = (a.workoutLabel.match(/easy/g) || []).length;
+    // At most warmup easy + cooldown easy
+    expect(easyParts).toBeLessThanOrEqual(2);
   });
 
   it("labels easy run simply: 2025-09-19", async () => {

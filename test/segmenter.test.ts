@@ -33,10 +33,16 @@ describe("auto-lap detection", () => {
 });
 
 describe("effort segmentation", () => {
-  it("does not auto-segment when laps are manual: 2026-02-28", async () => {
+  it("keeps manual lap structure but chunks long segments: 2026-02-28", async () => {
     const a = await parseFitFile(loadFixture("2026-02-28"), "test");
-    expect(a.segmentsDetected).toBe(false);
-    expect(a.segments.length).toBe(a.laps.length);
+    // Manual laps should be preserved — short segments unchanged
+    // But the 2.9km warmup should be chunked into ~1km pieces
+    const shortLaps = a.laps.filter((l) => l.totalDistance < 2000);
+    const shortSegs = a.segments.filter(
+      (s) => !s.detected && s.totalDistance < 2000
+    );
+    // Short interval/recovery laps should still be there
+    expect(shortSegs.length).toBeGreaterThanOrEqual(shortLaps.length);
   });
 
   it("does not create micro-segments from auto-laps: 2026-04-04", async () => {

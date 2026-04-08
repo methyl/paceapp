@@ -372,20 +372,92 @@ function mergeSmallSegments(segments: EffortSegment[]): EffortSegment[] {
   return merged;
 }
 
+const CHUNK_MAX_DISTANCE = 2000; // split segments longer than this
+const CHUNK_TARGET_DISTANCE = 1000; // target ~1km chunks
+
+/**
+ * Split long segments into ~1km chunks using record-level data.
+ * Short segments (< 2km) are left as-is.
+ */
+function chunkLongSegments(
+  segments: EffortSegment[],
+  records: RecordPoint[]
+): EffortSegment[] {
+  if (records.length === 0) return segments;
+
+  const result: EffortSegment[] = [];
+
+  for (const seg of segments) {
+    if (seg.totalDistance <= CHUNK_MAX_DISTANCE) {
+      result.push(seg);
+      continue;
+    }
+
+    // Find records belonging to this segment by timestamp range
+    const segStart = new Date(seg.startTime).getTime();
+    const segEnd = segStart + seg.totalElapsedTime * 1000;
+    const segRecords = records.filter((r) => {
+      const t = new Date(r.timestamp).getTime();
+      return t >= segStart && t <= segEnd;
+    });
+
+    if (segRecords.length < 10) {
+      result.push(seg);
+      continue;
+    }
+
+    // Split at every ~1km of distance
+    const startDist = segRecords[0].distance;
+    const chunks: RecordPoint[][] = [[]];
+    let nextSplitDist = startDist + CHUNK_TARGET_DISTANCE;
+
+    for (const rec of segRecords) {
+      if (rec.distance >= nextSplitDist && chunks[chunks.length - 1].length >= 5) {
+        chunks.push([]);
+        nextSplitDist = rec.distance + CHUNK_TARGET_DISTANCE;
+      }
+      chunks[chunks.length - 1].push(rec);
+    }
+
+    // Convert each chunk to a segment
+    for (const chunk of chunks) {
+      if (chunk.length < 3) continue;
+      const first = chunk[0];
+      const last = chunk[chunk.length - 1];
+      const elapsed =
+        (new Date(last.timestamp).getTime() - new Date(first.timestamp).getTime()) / 1000;
+      if (elapsed < 10) continue;
+      result.push(summarizeRecords(chunk, 0, elapsed));
+    }
+  }
+
+  // Re-index
+  result.forEach((s, i) => (s.lapIndex = i + 1));
+  return result;
+}
+
 /**
  * Get the best segments for analysis: if laps are auto-laps and we have
  * enough records, detect effort segments. Otherwise use original laps.
+ * Long segments (> 2km) are chunked into ~1km pieces using record data.
  */
 export function getEffortSegments(
   laps: LapSummary[],
   records: RecordPoint[]
 ): EffortSegment[] {
+  let segments: EffortSegment[];
+
   if (isAutoLap(laps) && records.length >= 120) {
     const detected = detectEffortSegments(records);
     if (detected.length > 1) {
-      return detected;
+      segments = detected;
+    } else {
+      segments = laps.map((l) => ({ ...l, detected: false }));
     }
+  } else {
+    segments = laps.map((l) => ({ ...l, detected: false }));
   }
 
-  return laps.map((l) => ({ ...l, detected: false }));
+  // Chunk any long segments into ~1km pieces for meaningful comparison
+  return chunkLongSegments(segments, records);
 }
