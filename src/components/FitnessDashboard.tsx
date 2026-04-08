@@ -80,7 +80,7 @@ function ScoreGauge({ score, label }: { score: number; label: string }) {
 function EFTrendChart({ fitness }: { fitness: FitnessSummary }) {
   const data = fitness.snapshots.map((s) => ({
     date: s.dateStr,
-    ef: s.rollingEF,
+    ef: s.freshEF || s.rawEF,
     score: s.score,
   }));
 
@@ -472,8 +472,9 @@ export default function FitnessDashboard({ activities }: FitnessDashboardProps) 
               Current EF
             </div>
             <div className="text-2xl font-bold text-gray-900">
-              {fitness.currentEF.toFixed(2)}
+              {fitness.currentFreshEF.toFixed(2)}
             </div>
+            <div className="text-xs text-gray-500">fresh segments</div>
           </div>
 
           <div className="text-center">
@@ -481,7 +482,7 @@ export default function FitnessDashboard({ activities }: FitnessDashboardProps) 
               Best EF
             </div>
             <div className="text-2xl font-bold text-green-600">
-              {fitness.bestEF.toFixed(2)}
+              {fitness.bestFreshEF.toFixed(2)}
             </div>
             <div className="text-xs text-gray-500">{fitness.peakDate}</div>
           </div>

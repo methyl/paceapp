@@ -1,14 +1,127 @@
-import type { ParsedActivity, WorkoutType } from "./types";
+import type { ParsedActivity, LapSummary, WorkoutType } from "./types";
 
 /**
  * Efficiency Factor = (speed m/s) / (heart rate bpm) × 1000
  * Higher = fitter (faster at lower HR).
- * Comparable across workouts of the same type and similar conditions.
  */
 export function efficiencyFactor(speedMps: number, hr: number): number {
   if (!speedMps || !hr || hr <= 0) return 0;
   return (speedMps / hr) * 1000;
 }
+
+// --- Prior load computation (shared with PaceComparison concept) ---
+
+export type LoadCategory = "fresh" | "light" | "moderate" | "heavy";
+
+export const LOAD_THRESHOLDS = {
+  /** speed(m/s) * time(s) cumulative before this lap */
+  light: 1000,
+  moderate: 5000,
+  heavy: 15000,
+};
+
+function computePriorLoad(laps: LapSummary[], upToIndex: number) {
+  let totalWork = 0;
+  let totalTime = 0;
+  let totalDist = 0;
+  let hrSum = 0;
+  let hrTime = 0;
+
+  for (let i = 0; i < upToIndex; i++) {
+    const lap = laps[i];
+    const speed = lap.avgSpeed ?? 0;
+    const time = lap.totalElapsedTime;
+    totalWork += speed * time;
+    totalTime += time;
+    totalDist += lap.totalDistance;
+    if (lap.avgHeartRate != null) {
+      hrSum += lap.avgHeartRate * time;
+      hrTime += time;
+    }
+  }
+
+  const load: LoadCategory =
+    totalWork < LOAD_THRESHOLDS.light
+      ? "fresh"
+      : totalWork < LOAD_THRESHOLDS.moderate
+        ? "light"
+        : totalWork < LOAD_THRESHOLDS.heavy
+          ? "moderate"
+          : "heavy";
+
+  return {
+    work: totalWork,
+    load,
+    distance: totalDist / 1000,
+    time: totalTime,
+    avgHR: hrTime > 0 ? hrSum / hrTime : 0,
+    avgSpeed: totalTime > 0 ? totalDist / totalTime : 0,
+  };
+}
+
+// --- Segment-level EF ---
+
+export interface SegmentEF {
+  activityId: string;
+  date: Date;
+  dateStr: string;
+  workoutType: WorkoutType;
+  lapIndex: number;
+  totalLaps: number;
+  ef: number;
+  speed: number; // m/s
+  hr: number; // bpm
+  pace: number; // sec/km
+  priorLoad: LoadCategory;
+  priorWork: number;
+  priorDistance: number;
+  priorAvgHR: number;
+}
+
+/** Extract per-segment EF with load context from all activities */
+export function computeSegmentEFs(activities: ParsedActivity[]): SegmentEF[] {
+  const segments: SegmentEF[] = [];
+
+  for (const a of activities) {
+    const date = a.summary.startTime ? new Date(a.summary.startTime) : new Date();
+    const dateStr = a.summary.startTime
+      ? new Date(a.summary.startTime).toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })
+      : a.fileName;
+
+    for (let i = 0; i < a.laps.length; i++) {
+      const lap = a.laps[i];
+      if (!lap.avgSpeed || lap.avgSpeed <= 0 || !lap.avgHeartRate) continue;
+      if (lap.totalDistance < 200) continue;
+
+      const prior = computePriorLoad(a.laps, i);
+
+      segments.push({
+        activityId: a.id,
+        date,
+        dateStr,
+        workoutType: a.workoutType,
+        lapIndex: i + 1,
+        totalLaps: a.laps.length,
+        ef: efficiencyFactor(lap.avgSpeed, lap.avgHeartRate),
+        speed: lap.avgSpeed,
+        hr: lap.avgHeartRate,
+        pace: Math.round(1000 / lap.avgSpeed),
+        priorLoad: prior.load,
+        priorWork: prior.work,
+        priorDistance: +prior.distance.toFixed(1),
+        priorAvgHR: Math.round(prior.avgHR),
+      });
+    }
+  }
+
+  return segments.sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
+// --- Activity-level EF (kept for the table / drift chart) ---
 
 export interface ActivityEF {
   id: string;
@@ -16,45 +129,43 @@ export interface ActivityEF {
   dateStr: string;
   workoutType: WorkoutType;
   ef: number;
+  /** Context-normalized: average EF of "fresh" segments only */
+  freshEF: number | null;
+  /** Average EF of "moderate"/"heavy" segments */
+  loadedEF: number | null;
   avgSpeed: number;
   avgHR: number;
   distance: number;
-  /** EF from laps — shows per-segment efficiency */
   lapEFs: { lapIndex: number; ef: number; speed: number; hr: number }[];
-  /** Cardiac drift: EF of second half vs first half. < 1 means HR drifted up */
   driftRatio: number;
 }
 
-export interface FitnessSnapshot {
-  date: Date;
-  dateStr: string;
-  /** Rolling average EF over recent steady runs */
-  rollingEF: number;
-  /** Fitness score 0-100 relative to personal best EF window */
-  score: number;
-  /** Number of activities in the rolling window */
-  sampleSize: number;
-}
-
-export interface FitnessSummary {
-  activities: ActivityEF[];
-  snapshots: FitnessSnapshot[];
-  currentScore: number;
-  peakScore: number;
-  peakDate: string;
-  bestEF: number;
-  currentEF: number;
-  trend: "improving" | "stable" | "declining";
-}
-
-/** Compute EF for each activity */
 export function computeActivityEFs(activities: ParsedActivity[]): ActivityEF[] {
+  const allSegments = computeSegmentEFs(activities);
+
   return activities
     .filter((a) => a.summary.avgSpeed && a.summary.avgHeartRate)
     .map((a) => {
       const avgSpeed = a.summary.avgSpeed!;
       const avgHR = a.summary.avgHeartRate!;
       const ef = efficiencyFactor(avgSpeed, avgHR);
+
+      const segs = allSegments.filter((s) => s.activityId === a.id);
+      const freshSegs = segs.filter(
+        (s) => s.priorLoad === "fresh" || s.priorLoad === "light"
+      );
+      const loadedSegs = segs.filter(
+        (s) => s.priorLoad === "moderate" || s.priorLoad === "heavy"
+      );
+
+      const freshEF =
+        freshSegs.length > 0
+          ? freshSegs.reduce((s, l) => s + l.ef, 0) / freshSegs.length
+          : null;
+      const loadedEF =
+        loadedSegs.length > 0
+          ? loadedSegs.reduce((s, l) => s + l.ef, 0) / loadedSegs.length
+          : null;
 
       const lapEFs = a.laps
         .filter((l) => l.avgSpeed && l.avgHeartRate)
@@ -65,7 +176,6 @@ export function computeActivityEFs(activities: ParsedActivity[]): ActivityEF[] {
           hr: l.avgHeartRate!,
         }));
 
-      // Cardiac drift: compare first-half EF vs second-half EF
       let driftRatio = 1;
       if (lapEFs.length >= 4) {
         const mid = Math.floor(lapEFs.length / 2);
@@ -90,8 +200,10 @@ export function computeActivityEFs(activities: ParsedActivity[]): ActivityEF[] {
           : a.fileName,
         workoutType: a.workoutType,
         ef,
-        avgSpeed: avgSpeed,
-        avgHR: avgHR,
+        freshEF,
+        loadedEF,
+        avgSpeed,
+        avgHR,
         distance: a.summary.totalDistance / 1000,
         lapEFs,
         driftRatio,
@@ -100,87 +212,141 @@ export function computeActivityEFs(activities: ParsedActivity[]): ActivityEF[] {
     .sort((a, b) => a.date.getTime() - b.date.getTime());
 }
 
+// --- Fitness snapshots ---
+
+export interface FitnessSnapshot {
+  date: Date;
+  dateStr: string;
+  /** Rolling fresh-segment EF */
+  freshEF: number;
+  /** Rolling loaded-segment EF */
+  loadedEF: number | null;
+  /** Rolling whole-activity EF (fallback) */
+  rawEF: number;
+  score: number;
+  sampleSize: number;
+}
+
+export interface FitnessSummary {
+  activities: ActivityEF[];
+  segments: SegmentEF[];
+  snapshots: FitnessSnapshot[];
+  currentScore: number;
+  peakScore: number;
+  peakDate: string;
+  bestFreshEF: number;
+  currentFreshEF: number;
+  bestLoadedEF: number;
+  currentLoadedEF: number;
+  trend: "improving" | "stable" | "declining";
+}
+
+function rollingAvg(values: (number | null)[], windowSize: number): (number | null)[] {
+  return values.map((_, i) => {
+    const window = values
+      .slice(Math.max(0, i - windowSize + 1), i + 1)
+      .filter((v): v is number => v != null);
+    return window.length > 0 ? window.reduce((s, v) => s + v, 0) / window.length : null;
+  });
+}
+
 /**
- * Compute fitness snapshots over time.
+ * Compute fitness using context-normalized EF.
  *
- * Uses steady-state runs (easy + long) as they're the most reliable
- * for EF comparison. Computes a rolling average over a window.
+ * Primary signal: rolling average of fresh-segment EF across steady runs.
+ * Secondary signal: loaded-segment EF for endurance fitness.
  */
 export function computeFitness(
   activities: ParsedActivity[],
   windowSize = 5
 ): FitnessSummary {
   const allEFs = computeActivityEFs(activities);
+  const allSegments = computeSegmentEFs(activities);
 
-  // Steady runs are most reliable for fitness tracking
+  // Prefer steady runs for the score, but fall back to all
   const steadyTypes: WorkoutType[] = ["easy", "long", "tempo"];
   const steadyEFs = allEFs.filter((a) => steadyTypes.includes(a.workoutType));
-
-  // Fall back to all if not enough steady runs
   const source = steadyEFs.length >= 3 ? steadyEFs : allEFs;
 
   if (source.length === 0) {
     return {
       activities: allEFs,
+      segments: allSegments,
       snapshots: [],
       currentScore: 0,
       peakScore: 0,
       peakDate: "-",
-      bestEF: 0,
-      currentEF: 0,
+      bestFreshEF: 0,
+      currentFreshEF: 0,
+      bestLoadedEF: 0,
+      currentLoadedEF: 0,
       trend: "stable",
     };
   }
 
-  // Find min/max EF for normalization
-  const efValues = source.map((a) => a.ef);
-  const minEF = Math.min(...efValues);
-  const maxEF = Math.max(...efValues);
+  // Build rolling averages from fresh-segment EF per activity
+  const freshEFs = source.map((a) => a.freshEF);
+  const loadedEFs = source.map((a) => a.loadedEF);
+  const rawEFs = source.map((a) => a.ef);
+
+  const rollingFresh = rollingAvg(freshEFs, windowSize);
+  const rollingLoaded = rollingAvg(loadedEFs, windowSize);
+  const rollingRaw = rollingAvg(rawEFs, windowSize);
+
+  // Use fresh EF for scoring; fall back to raw if no fresh data
+  const scoreBasis = rollingFresh.map((v, i) => v ?? rollingRaw[i] ?? 0);
+  const validScores = scoreBasis.filter((v) => v > 0);
+  const minEF = validScores.length > 0 ? Math.min(...validScores) : 0;
+  const maxEF = validScores.length > 0 ? Math.max(...validScores) : 0;
   const efRange = maxEF - minEF || 1;
 
-  // Compute rolling average snapshots
-  const snapshots: FitnessSnapshot[] = [];
-  for (let i = 0; i < source.length; i++) {
-    const windowStart = Math.max(0, i - windowSize + 1);
-    const window = source.slice(windowStart, i + 1);
-    const rollingEF =
-      window.reduce((s, a) => s + a.ef, 0) / window.length;
-    const score = Math.round(((rollingEF - minEF) / efRange) * 100);
+  const snapshots: FitnessSnapshot[] = source.map((a, i) => ({
+    date: a.date,
+    dateStr: a.dateStr,
+    freshEF: +(rollingFresh[i] ?? 0).toFixed(2),
+    loadedEF: rollingLoaded[i] != null ? +rollingLoaded[i].toFixed(2) : null,
+    rawEF: +(rollingRaw[i] ?? 0).toFixed(2),
+    score: Math.max(
+      0,
+      Math.min(100, Math.round(((scoreBasis[i] - minEF) / efRange) * 100))
+    ),
+    sampleSize: Math.min(i + 1, windowSize),
+  }));
 
-    snapshots.push({
-      date: source[i].date,
-      dateStr: source[i].dateStr,
-      rollingEF: +rollingEF.toFixed(2),
-      score: Math.max(0, Math.min(100, score)),
-      sampleSize: window.length,
-    });
-  }
+  const current = snapshots[snapshots.length - 1];
+  const peak = snapshots.reduce((best, s) => (s.score > best.score ? s : best));
 
-  const currentSnapshot = snapshots[snapshots.length - 1];
-  const peakSnapshot = snapshots.reduce((best, s) =>
-    s.score > best.score ? s : best
-  );
-
-  // Trend: compare last 3 vs previous 3
+  // Trend from fresh EF
   let trend: "improving" | "stable" | "declining" = "stable";
   if (snapshots.length >= 6) {
     const recent = snapshots.slice(-3);
     const prior = snapshots.slice(-6, -3);
-    const recentAvg = recent.reduce((s, v) => s + v.rollingEF, 0) / 3;
-    const priorAvg = prior.reduce((s, v) => s + v.rollingEF, 0) / 3;
-    const change = (recentAvg - priorAvg) / priorAvg;
-    if (change > 0.02) trend = "improving";
-    else if (change < -0.02) trend = "declining";
+    const recentAvg = recent.reduce((s, v) => s + v.freshEF, 0) / 3;
+    const priorAvg = prior.reduce((s, v) => s + v.freshEF, 0) / 3;
+    if (priorAvg > 0) {
+      const change = (recentAvg - priorAvg) / priorAvg;
+      if (change > 0.02) trend = "improving";
+      else if (change < -0.02) trend = "declining";
+    }
   }
+
+  // Best loaded EF
+  const loadedValues = allEFs.map((a) => a.loadedEF).filter((v): v is number => v != null);
+  const currentLoadedSnap = rollingLoaded.filter((v): v is number => v != null);
 
   return {
     activities: allEFs,
+    segments: allSegments,
     snapshots,
-    currentScore: currentSnapshot?.score ?? 0,
-    peakScore: peakSnapshot?.score ?? 0,
-    peakDate: peakSnapshot?.dateStr ?? "-",
-    bestEF: maxEF,
-    currentEF: currentSnapshot?.rollingEF ?? 0,
+    currentScore: current?.score ?? 0,
+    peakScore: peak?.score ?? 0,
+    peakDate: peak?.dateStr ?? "-",
+    bestFreshEF: maxEF,
+    currentFreshEF: current?.freshEF ?? 0,
+    bestLoadedEF: loadedValues.length > 0 ? Math.max(...loadedValues) : 0,
+    currentLoadedEF: currentLoadedSnap.length > 0
+      ? currentLoadedSnap[currentLoadedSnap.length - 1]
+      : 0,
     trend,
   };
 }
