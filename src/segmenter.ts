@@ -202,9 +202,11 @@ function mergeInto(target: EffortSegment, source: EffortSegment) {
  * Validate that detected segments form a consistent, repeating pattern.
  *
  * Accepts:
- * 1. Interval pattern: >= 2 fast reps each >= 200m with similar pace
- *    (CV < 10%) AND similar duration (CV < 40%).
- * 2. Tempo/threshold: warmup + sustained block (>= 35% of time) + cooldown.
+ * 1. Interval pattern: >= 2 fast reps with consistent pace (CV < 8%),
+ *    consistent distance (CV < 30%), AND consistent duration (CV < 30%).
+ *    All three must pass — this is the key filter against noise.
+ * 2. Tempo/threshold: warmup + single sustained faster block covering
+ *    >= 35% of time + cooldown. Max 5 total segments (not choppy).
  */
 function hasConsistentPattern(segments: EffortSegment[]): boolean {
   if (segments.length < 3) return false;
@@ -215,33 +217,37 @@ function hasConsistentPattern(segments: EffortSegment[]): boolean {
   const sorted = [...speeds].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];
 
-  // Need a meaningful speed spread — if all segments are within 8% of
-  // median there's no real structure to detect
+  // Need a meaningful speed spread
   const maxSpeed = Math.max(...speeds);
   const minSpeed = Math.min(...speeds);
-  if ((maxSpeed - minSpeed) / median < 0.12) return false;
+  if ((maxSpeed - minSpeed) / median < 0.15) return false;
 
   const fast = segments.filter(
-    (s) => (s.avgSpeed ?? 0) > median * 1.05 && s.totalDistance >= 200
-  );
-  const slow = segments.filter(
-    (s) => (s.avgSpeed ?? 0) <= median * 0.95
+    (s) => (s.avgSpeed ?? 0) > median * 1.08 && s.totalDistance >= 200
   );
 
   // --- Check interval pattern ---
-  if (fast.length >= 2 && slow.length >= 1) {
+  // Need at least 2 fast reps that are truly consistent with each other
+  if (fast.length >= 2) {
     const fastSpeeds = fast.map((s) => s.avgSpeed!);
     const fastDurations = fast.map((s) => s.totalElapsedTime);
+    const fastDistances = fast.map((s) => s.totalDistance);
 
     const speedCV = cv(fastSpeeds);
     const durationCV = cv(fastDurations);
+    const distanceCV = cv(fastDistances);
 
-    if (speedCV < 0.10 && durationCV < 0.40) {
+    // All three must be consistent — this is strict on purpose.
+    // Real intervals (e.g., 4x800m) will have CV < 5% on distance.
+    if (speedCV < 0.08 && durationCV < 0.30 && distanceCV < 0.30) {
       return true;
     }
   }
 
   // --- Check tempo pattern ---
+  // Must be a simple structure: warmup + block + cooldown (max 5 segments)
+  if (segments.length > 5) return false;
+
   const totalTime = segments.reduce((s, seg) => s + seg.totalElapsedTime, 0);
   let bestBlockTime = 0;
   let bestBlockStart = -1;
@@ -249,7 +255,7 @@ function hasConsistentPattern(segments: EffortSegment[]): boolean {
   let blockStart = 0;
 
   for (let i = 0; i < segments.length; i++) {
-    if ((segments[i].avgSpeed ?? 0) > median * 1.04) {
+    if ((segments[i].avgSpeed ?? 0) > median * 1.06) {
       if (blockTime === 0) blockStart = i;
       blockTime += segments[i].totalElapsedTime;
       if (blockTime > bestBlockTime) {
