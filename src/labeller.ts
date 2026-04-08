@@ -141,22 +141,21 @@ export function generateWorkoutLabel(
     const block = classified[i];
 
     if (block.type === "fast") {
-      // Collect consecutive fast reps (possibly with recovery between)
+      // Collect fast reps with recovery (easy) blocks between them.
+      // Consecutive fast blocks WITHOUT recovery = sustained effort, not reps.
       const reps: SegmentBlock[] = [block];
+      const recoveryIndices: number[] = [];
       let j = i + 1;
       while (j < classified.length) {
         const next = classified[j];
-        if (next.type === "fast" && isSimilar(block, next)) {
-          reps.push(next);
-          j++;
-        } else if (
+        if (
           next.type === "easy" &&
           j + 1 < classified.length &&
           classified[j + 1].type === "fast" &&
           isSimilar(block, classified[j + 1])
         ) {
           // Recovery between reps — mark as consumed, grab next fast
-          consumed.add(j);
+          recoveryIndices.push(j);
           reps.push(classified[j + 1]);
           j += 2;
         } else {
@@ -164,18 +163,34 @@ export function generateWorkoutLabel(
         }
       }
 
-      if (reps.length >= 2) {
+      // Only label as intervals if there were actual recovery breaks
+      if (reps.length >= 2 && recoveryIndices.length >= 1) {
+        for (const ri of recoveryIndices) consumed.add(ri);
         const bucket = reps[0].distanceBucket;
         const dist = bucket ?? distLabel(reps[0].totalDistance);
         const avgPace = paceStr(
           reps.reduce((s, r) => s + r.avgSpeed, 0) / reps.length
         );
         parts.push(`${reps.length}×${dist} @${avgPace}`);
+        i = j;
       } else {
-        const dist = block.distanceBucket ?? distLabel(block.totalDistance);
-        parts.push(`${dist} @${paceStr(block.avgSpeed)}`);
+        // Consecutive fast blocks or single fast = sustained effort
+        // Merge all consecutive fast blocks into one
+        let sustainedDist = block.totalDistance;
+        let speedSum = block.avgSpeed;
+        let count = 1;
+        let k = i + 1;
+        while (k < classified.length && classified[k].type === "fast") {
+          sustainedDist += classified[k].totalDistance;
+          speedSum += classified[k].avgSpeed;
+          count++;
+          k++;
+        }
+        const avgPace = paceStr(speedSum / count);
+        const typeLabel = workoutType === "race" ? "race" : workoutType === "tempo" ? "tempo" : workoutType === "steady" ? "steady" : "run";
+        parts.push(`${distLabel(sustainedDist)} ${typeLabel} @${avgPace}`);
+        i = k;
       }
-      i = j;
     } else if (!consumed.has(i)) {
       // Easy block — only output if not consumed as recovery
       parts.push(`${distLabel(block.totalDistance)} easy`);
