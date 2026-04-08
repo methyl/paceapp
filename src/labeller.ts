@@ -90,15 +90,15 @@ export function generateWorkoutLabel(
 
     const isEasyHR = seg.avgHeartRate != null && seg.avgHeartRate <= z2;
     const isFast = seg.avgSpeed > medianSpeed * 1.08;
-    const isSlow = seg.avgSpeed < medianSpeed * 0.92;
 
     let type: "easy" | "fast" | "recovery";
     if (isFast) {
       type = "fast";
-    } else if (isEasyHR || isSlow) {
+    } else if (isEasyHR) {
       type = "easy";
     } else {
-      type = "easy";
+      // Not explicitly fast, not easy HR — classify based on workout type
+      type = workoutType === "easy" ? "easy" : "fast";
     }
 
     const bucket = getDistanceBucket(seg.totalDistance);
@@ -180,9 +180,19 @@ export function generateWorkoutLabel(
     }
   }
 
-  // Simplify: if the whole thing is just easy, collapse
+  // Simplify: if the whole thing is one block, use clean label
   if (parts.length === 1 && parts[0].endsWith("easy")) {
     return `${distLabel(totalDistance)} easy`;
+  }
+
+  // Steady hard effort (race/tempo) — all segments same pace, no structure
+  const allFast = classified.every((b) => b.type === "fast");
+  if (allFast && classified.length >= 1) {
+    const avgPace = paceStr(
+      classified.reduce((s, b) => s + b.avgSpeed, 0) / classified.length
+    );
+    const typeLabel = workoutType === "race" ? "race" : workoutType === "tempo" ? "tempo" : "run";
+    return `${distLabel(totalDistance)} ${typeLabel} @${avgPace}`;
   }
 
   return parts.join(" + ");
