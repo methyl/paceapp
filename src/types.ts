@@ -1,3 +1,32 @@
+export type WorkoutType =
+  | "easy"
+  | "long"
+  | "tempo"
+  | "intervals"
+  | "progressive"
+  | "race"
+  | "unknown";
+
+export const WORKOUT_LABELS: Record<WorkoutType, string> = {
+  easy: "Easy Run",
+  long: "Long Run",
+  tempo: "Tempo Run",
+  intervals: "Intervals",
+  progressive: "Progressive",
+  race: "Race",
+  unknown: "Other",
+};
+
+export const WORKOUT_COLORS: Record<WorkoutType, string> = {
+  easy: "#22c55e",
+  long: "#3b82f6",
+  tempo: "#f59e0b",
+  intervals: "#ef4444",
+  progressive: "#8b5cf6",
+  race: "#ec4899",
+  unknown: "#6b7280",
+};
+
 export interface LapSummary {
   lapIndex: number;
   startTime: string;
@@ -49,6 +78,9 @@ export interface ActivitySummary {
 }
 
 export interface ParsedActivity {
+  id: string;
+  fileName: string;
+  workoutType: WorkoutType;
   summary: ActivitySummary;
   laps: LapSummary[];
   records: RecordPoint[];

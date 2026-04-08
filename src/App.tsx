@@ -1,101 +1,205 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import FileUpload from "./components/FileUpload";
 import Summary from "./components/Summary";
 import LapTable from "./components/LapTable";
 import DynamicsCharts from "./components/DynamicsCharts";
+import ActivityList from "./components/ActivityList";
+import HRComparison from "./components/HRComparison";
 import { parseFitFile } from "./parseFit";
-import type { ParsedActivity } from "./types";
+import type { ParsedActivity, WorkoutType } from "./types";
+import { WORKOUT_LABELS, WORKOUT_COLORS } from "./types";
+
+type View = "library" | "detail" | "compare";
 
 function App() {
-  const [activity, setActivity] = useState<ParsedActivity | null>(null);
-  const [fileName, setFileName] = useState<string>("");
+  const [activities, setActivities] = useState<ParsedActivity[]>([]);
+  const [selected, setSelected] = useState<ParsedActivity | null>(null);
+  const [view, setView] = useState<View>("library");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>("");
+  const [loadProgress, setLoadProgress] = useState({ done: 0, total: 0 });
+  const [error, setError] = useState("");
+  const [filterType, setFilterType] = useState<WorkoutType | "all">("all");
 
-  const handleFile = async (buffer: ArrayBuffer, name: string) => {
-    setLoading(true);
-    setError("");
-    try {
-      const parsed = await parseFitFile(buffer);
-      setActivity(parsed);
-      setFileName(name);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to parse FIT file");
-      setActivity(null);
-    } finally {
+  const handleFiles = useCallback(
+    async (files: { buffer: ArrayBuffer; name: string }[]) => {
+      setLoading(true);
+      setError("");
+      setLoadProgress({ done: 0, total: files.length });
+
+      const parsed: ParsedActivity[] = [];
+      let failed = 0;
+
+      for (const f of files) {
+        try {
+          const activity = await parseFitFile(f.buffer, f.name);
+          // Only include running activities (or unknown sport)
+          if (
+            !activity.summary.sport ||
+            activity.summary.sport === "running" ||
+            activity.summary.sport === "trail_running"
+          ) {
+            parsed.push(activity);
+          }
+        } catch {
+          failed++;
+        }
+        setLoadProgress((p) => ({ ...p, done: p.done + 1 }));
+      }
+
+      setActivities((prev) => {
+        const existingNames = new Set(prev.map((a) => a.fileName));
+        const newOnes = parsed.filter((a) => !existingNames.has(a.fileName));
+        return [...prev, ...newOnes];
+      });
       setLoading(false);
-    }
-  };
 
-  const handleReset = () => {
-    setActivity(null);
-    setFileName("");
-    setError("");
+      if (failed > 0) {
+        setError(`${failed} file(s) could not be parsed`);
+      }
+
+      if (parsed.length === 1 && activities.length === 0) {
+        setSelected(parsed[0]);
+        setView("detail");
+      }
+    },
+    [activities.length]
+  );
+
+  const handleSelectActivity = (a: ParsedActivity) => {
+    setSelected(a);
+    setView("detail");
   };
 
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-gray-900 tracking-tight">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+          <button
+            onClick={() => {
+              setView("library");
+              setSelected(null);
+            }}
+            className="text-xl font-bold text-gray-900 tracking-tight hover:text-blue-600 transition-colors"
+          >
             PaceApp
-            <span className="text-sm font-normal text-gray-500 ml-2">Running Dynamics Analyzer</span>
-          </h1>
-          {activity && (
-            <button
-              onClick={handleReset}
-              className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-            >
-              Load another file
-            </button>
+            <span className="text-sm font-normal text-gray-500 ml-2">
+              Running Dynamics Analyzer
+            </span>
+          </button>
+
+          {activities.length > 0 && (
+            <nav className="flex gap-1 bg-gray-100 rounded-lg p-1">
+              <button
+                onClick={() => {
+                  setView("library");
+                  setSelected(null);
+                }}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  view === "library"
+                    ? "bg-white text-gray-900 shadow-sm"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Library
+              </button>
+              <button
+                onClick={() => setView("compare")}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  view === "compare"
+                    ? "bg-white text-gray-900 shadow-sm"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Compare HR
+              </button>
+            </nav>
           )}
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-8 space-y-8">
-        {!activity && !loading && (
+      <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+        {/* Loading state */}
+        {loading && (
+          <div className="text-center py-12">
+            <div className="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-gray-600 mt-3">
+              Parsing FIT files... {loadProgress.done} / {loadProgress.total}
+            </p>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-amber-800 text-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!loading && activities.length === 0 && (
           <div className="max-w-lg mx-auto mt-12">
             <div className="text-center mb-8">
               <h2 className="text-3xl font-bold text-gray-900 mb-2">
-                Analyze Your Run
+                Analyze Your Runs
               </h2>
               <p className="text-gray-600">
-                Upload a .FIT file from your Garmin or other device to see detailed
-                running dynamics per segment.
+                Upload .FIT files or open a folder (like your iCloud Drive) to see
+                running dynamics and compare heart rate across workouts.
               </p>
             </div>
-            <FileUpload onFileLoaded={handleFile} />
+            <FileUpload onFilesLoaded={handleFiles} multiple />
           </div>
         )}
 
-        {loading && (
-          <div className="text-center py-20">
-            <div className="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-gray-600 mt-3">Parsing FIT file...</p>
-          </div>
-        )}
-
-        {error && (
-          <div className="max-w-lg mx-auto">
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-800">
-              <p className="font-medium">Error parsing file</p>
-              <p className="text-sm mt-1">{error}</p>
-            </div>
-            <div className="mt-4">
-              <FileUpload onFileLoaded={handleFile} />
-            </div>
-          </div>
-        )}
-
-        {activity && (
+        {/* Library view */}
+        {!loading && activities.length > 0 && view === "library" && (
           <>
-            <div className="flex items-center gap-2 text-sm text-gray-500">
-              <span>File: {fileName}</span>
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">
+                {activities.length} run{activities.length !== 1 ? "s" : ""} loaded
+              </h2>
+              <FileUpload onFilesLoaded={handleFiles} multiple />
             </div>
-            <Summary summary={activity.summary} />
-            <LapTable laps={activity.laps} />
-            <DynamicsCharts laps={activity.laps} records={activity.records} />
+            <ActivityList
+              activities={activities}
+              onSelect={handleSelectActivity}
+              filterType={filterType}
+              onFilterChange={setFilterType}
+            />
           </>
+        )}
+
+        {/* Detail view */}
+        {!loading && view === "detail" && selected && (
+          <>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  setView("library");
+                  setSelected(null);
+                }}
+                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+              >
+                &larr; Back to library
+              </button>
+              <span className="text-sm text-gray-400">|</span>
+              <span className="text-sm text-gray-500">{selected.fileName}</span>
+              <span
+                className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold text-white"
+                style={{ backgroundColor: WORKOUT_COLORS[selected.workoutType] }}
+              >
+                {WORKOUT_LABELS[selected.workoutType]}
+              </span>
+            </div>
+            <Summary summary={selected.summary} />
+            <LapTable laps={selected.laps} />
+            <DynamicsCharts laps={selected.laps} records={selected.records} />
+          </>
+        )}
+
+        {/* Compare view */}
+        {!loading && view === "compare" && activities.length > 0 && (
+          <HRComparison activities={activities} />
         )}
       </main>
     </div>
