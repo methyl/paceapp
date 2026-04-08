@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -9,24 +9,18 @@ import {
   CartesianGrid,
   ReferenceDot,
 } from "recharts";
-import type { ParsedActivity, LapSummary } from "../types";
-import { efficiencyFactor, computePriorLoad } from "../fitness";
+import type { ParsedActivity } from "../types";
 import type { LoadCategory } from "../fitness";
-import { getDistanceBucket, type DistanceBucket } from "../labeller";
+import {
+  groupCurrentSegments,
+  findHistoricalPoints,
+  type SegmentGroup,
+  type WorkoutPoint,
+} from "../segmentHistory";
 
 interface SegmentHistoryProps {
   current: ParsedActivity;
   allActivities: ParsedActivity[];
-}
-
-function priorLoadCategory(segs: LapSummary[], upToIndex: number): LoadCategory {
-  return computePriorLoad(segs, upToIndex).load;
-}
-
-function paceStr(speedMps: number): string {
-  if (!speedMps || speedMps <= 0) return "-";
-  const s = 1000 / speedMps;
-  return `${Math.floor(s / 60)}:${Math.round(s % 60).toString().padStart(2, "0")}`;
 }
 
 const LOAD_LABELS: Record<LoadCategory, string> = {
@@ -36,240 +30,167 @@ const LOAD_LABELS: Record<LoadCategory, string> = {
   heavy: "Heavy",
 };
 
-const ADJACENT_LOADS: Record<LoadCategory, LoadCategory[]> = {
-  fresh: ["fresh", "light"],
-  light: ["fresh", "light", "moderate"],
-  moderate: ["light", "moderate", "heavy"],
-  heavy: ["moderate", "heavy"],
-};
+type MetricKey = "avgEF" | "avgVerticalOscillation" | "avgGroundContactTime" | "avgStrideLength" | "avgVerticalRatio" | "avgCadence" | "avgPower";
 
-/** A group of similar segments from the current workout */
-interface SegmentGroup {
-  avgSpeed: number;
-  avgPace: string;
-  load: LoadCategory;
-  /** Distance bucket for matching (e.g., "1km", "400m", "strides") */
-  distBucket: DistanceBucket;
-  segments: { seg: LapSummary; index: number }[];
-  avgEF: number;
-  avgHR: number;
+const METRICS: { key: MetricKey; label: string; unit: string; color: string; format?: (v: number) => string }[] = [
+  { key: "avgEF", label: "EF", unit: "", color: "#6366f1" },
+  { key: "avgVerticalOscillation", label: "Vert. Osc.", unit: "mm", color: "#6366f1" },
+  { key: "avgGroundContactTime", label: "GCT", unit: "ms", color: "#f59e0b" },
+  { key: "avgStrideLength", label: "Stride", unit: "m", color: "#3b82f6", format: (v) => (v / 1000).toFixed(2) },
+  { key: "avgVerticalRatio", label: "Vert. Ratio", unit: "%", color: "#ef4444" },
+  { key: "avgCadence", label: "Cadence", unit: "spm", color: "#10b981" },
+  { key: "avgPower", label: "Power", unit: "W", color: "#8b5cf6" },
+];
+
+function MiniChart({
+  group,
+  points,
+  metricKey,
+  metricLabel,
+  metricUnit,
+  metricColor,
+  formatValue,
+}: {
+  group: SegmentGroup;
+  points: WorkoutPoint[];
+  metricKey: MetricKey;
+  metricLabel: string;
+  metricUnit: string;
+  metricColor: string;
+  formatValue?: (v: number) => string;
+}) {
+  const data = points
+    .filter((p) => p[metricKey] != null)
+    .map((p) => ({
+      dateStr: p.dateStr,
+      value: +(p[metricKey] as number).toFixed(2),
+      isCurrent: p.isCurrent,
+    }));
+
+  if (data.length < 2) return null;
+
+  const currentPoint = data.find((d) => d.isCurrent);
+  const fmtVal = formatValue ?? ((v: number) => v.toFixed(1));
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] font-medium text-gray-500">
+          {metricLabel} {metricUnit && `(${metricUnit})`}
+        </span>
+        {group[metricKey] != null && (
+          <span className="text-[10px] font-bold text-gray-700">
+            {fmtVal(group[metricKey] as number)}
+          </span>
+        )}
+      </div>
+      <ResponsiveContainer width="100%" height={70}>
+        <ComposedChart data={data} margin={{ top: 2, right: 2, bottom: 0, left: 2 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="dateStr" tick={false} height={0} />
+          <YAxis tick={{ fontSize: 8 }} domain={["auto", "auto"]} width={30} />
+          <Tooltip
+            content={({ payload }) => {
+              if (!payload?.length) return null;
+              const d = payload[0]?.payload as (typeof data)[0];
+              return (
+                <div className="bg-white border border-gray-200 rounded p-1 text-[10px] shadow">
+                  <div className="font-semibold">{d.dateStr} {d.isCurrent ? "(now)" : ""}</div>
+                  <div>{metricLabel}: {fmtVal(d.value)} {metricUnit}</div>
+                </div>
+              );
+            }}
+          />
+          <Line type="monotone" dataKey="value" stroke={metricColor} strokeWidth={1.5} dot={{ r: 1.5 }} />
+          {currentPoint && (
+            <ReferenceDot x={currentPoint.dateStr} y={currentPoint.value} r={4} fill={metricColor} stroke="#fff" strokeWidth={1.5} />
+          )}
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
 }
 
-/** One data point per workout in the history chart */
-interface WorkoutPoint {
-  date: Date;
-  dateStr: string;
-  avgEF: number;
-  avgHR: number;
-  avgPace: string;
-  count: number;
-  isCurrent: boolean;
-}
-
-/**
- * Group the current workout's segments by similar pace (±15s/km)
- * and same load category. Each group becomes one chart.
- */
-function groupCurrentSegments(activity: ParsedActivity): SegmentGroup[] {
-  const groups: SegmentGroup[] = [];
-
-  for (let i = 0; i < activity.segments.length; i++) {
-    const seg = activity.segments[i];
-    if (!seg.avgSpeed || seg.avgSpeed <= 0 || !seg.avgHeartRate) continue;
-    if (seg.totalDistance < 200) continue;
-
-    const pace = 1000 / seg.avgSpeed;
-    const load = priorLoadCategory(activity.segments, i);
-    const distBucket = getDistanceBucket(seg.totalDistance);
-
-    // Group by: similar pace + same load + same distance bucket
-    const existing = groups.find((g) => {
-      const gPace = 1000 / g.avgSpeed;
-      const paceMatch = Math.abs(pace - gPace) <= 15;
-      const loadMatch = g.load === load;
-      const distMatch = g.distBucket === distBucket;
-      return paceMatch && loadMatch && distMatch;
-    });
-
-    if (existing) {
-      existing.segments.push({ seg, index: i });
-      const n = existing.segments.length;
-      const allSegs = existing.segments.map((s) => s.seg);
-      existing.avgSpeed = allSegs.reduce((s, v) => s + (v.avgSpeed ?? 0), 0) / n;
-      existing.avgPace = paceStr(existing.avgSpeed);
-      existing.avgEF = allSegs.reduce(
-        (s, v) => s + efficiencyFactor(v.avgSpeed!, v.avgHeartRate!), 0
-      ) / n;
-      existing.avgHR = allSegs.reduce((s, v) => s + (v.avgHeartRate ?? 0), 0) / n;
-    } else {
-      groups.push({
-        avgSpeed: seg.avgSpeed,
-        avgPace: paceStr(seg.avgSpeed),
-        load,
-        distBucket,
-        segments: [{ seg, index: i }],
-        avgEF: efficiencyFactor(seg.avgSpeed, seg.avgHeartRate),
-        avgHR: seg.avgHeartRate,
-      });
-    }
-  }
-
-  return groups;
-}
-
-/**
- * For a segment group, find matching segments from all workouts,
- * averaged per workout into one point each.
- */
-function findHistoricalPoints(
-  group: SegmentGroup,
-  allActivities: ParsedActivity[],
-  currentId: string
-): WorkoutPoint[] {
-  const targetPace = 1000 / group.avgSpeed;
-  const TOLERANCE = 15;
-  const allowedLoads = ADJACENT_LOADS[group.load];
-
-  const workoutMap = new Map<string, { efs: number[]; hrs: number[]; date: Date; dateStr: string }>();
-
-  for (const a of allActivities) {
-    const segs = a.segments;
-    for (let i = 0; i < segs.length; i++) {
-      const seg = segs[i];
-      if (!seg.avgSpeed || seg.avgSpeed <= 0 || !seg.avgHeartRate) continue;
-      if (seg.totalDistance < 200) continue;
-
-      const segPace = 1000 / seg.avgSpeed;
-      if (Math.abs(segPace - targetPace) > TOLERANCE) continue;
-
-      const load = priorLoadCategory(segs, i);
-      if (!allowedLoads.includes(load)) continue;
-
-      // Match distance bucket — 1km reps only compare to 1km reps
-      const segBucket = getDistanceBucket(seg.totalDistance);
-      if (group.distBucket !== segBucket) continue;
-
-      if (!workoutMap.has(a.id)) {
-        workoutMap.set(a.id, {
-          efs: [],
-          hrs: [],
-          date: a.summary.startTime ? new Date(a.summary.startTime) : new Date(),
-          dateStr: a.summary.startTime
-            ? new Date(a.summary.startTime).toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-              })
-            : a.fileName,
-        });
-      }
-
-      const entry = workoutMap.get(a.id)!;
-      entry.efs.push(efficiencyFactor(seg.avgSpeed, seg.avgHeartRate));
-      entry.hrs.push(seg.avgHeartRate);
-    }
-  }
-
-  const points: WorkoutPoint[] = [];
-  for (const [id, entry] of workoutMap) {
-    if (entry.efs.length === 0) continue;
-    const avgEF = entry.efs.reduce((s, v) => s + v, 0) / entry.efs.length;
-    const avgHR = entry.hrs.reduce((s, v) => s + v, 0) / entry.hrs.length;
-    points.push({
-      date: entry.date,
-      dateStr: entry.dateStr,
-      avgEF: +avgEF.toFixed(2),
-      avgHR: Math.round(avgHR),
-      avgPace: paceStr(group.avgSpeed),
-      count: entry.efs.length,
-      isCurrent: id === currentId,
-    });
-  }
-
-  return points.sort((a, b) => a.date.getTime() - b.date.getTime());
-}
-
-function GroupChart({
+function GroupCard({
   group,
   points,
 }: {
   group: SegmentGroup;
   points: WorkoutPoint[];
 }) {
+  const [expanded, setExpanded] = useState(false);
+
   if (points.length < 2) return null;
 
-  const currentPoint = points.find((p) => p.isCurrent);
+  // Figure out which dynamics are available
+  const availableMetrics = METRICS.filter((m) => {
+    if (m.key === "avgEF") return true; // always show EF
+    return points.some((p) => p[m.key] != null);
+  });
 
   return (
     <div className="bg-gray-50 rounded-lg border border-gray-100 p-3">
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs font-semibold text-gray-700">
           {group.distBucket ? `${group.distBucket} ` : ""}{group.avgPace}/km
-          <span className="font-normal text-gray-500 ml-1">
-            — {LOAD_LABELS[group.load]} load
-          </span>
+          <span className="font-normal text-gray-500 ml-1">— {LOAD_LABELS[group.load]}</span>
           {group.segments.length > 1 && (
-            <span className="font-normal text-gray-400 ml-1">
-              ({group.segments.length}× averaged)
-            </span>
+            <span className="font-normal text-gray-400 ml-1">({group.segments.length}× avg)</span>
           )}
         </span>
-        <span className="text-xs text-gray-500">
-          {points.length} workouts
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-gray-500">{points.length} workouts</span>
+          {availableMetrics.length > 1 && (
+            <button
+              onClick={() => setExpanded((v) => !v)}
+              className="text-[10px] text-blue-600 hover:text-blue-800 font-medium"
+            >
+              {expanded ? "Less" : "Dynamics"}
+            </button>
+          )}
+        </div>
       </div>
-      <div className="flex items-center gap-3 mb-2">
-        <span className="text-xs">
-          EF: <span className="font-bold">{group.avgEF.toFixed(2)}</span>
-        </span>
-        <span className="text-xs text-gray-500">
-          HR: {Math.round(group.avgHR)} bpm
-        </span>
-        {points.length >= 3 && (
-          <span className="text-xs text-gray-500">
-            Range: {Math.min(...points.map((p) => p.avgEF)).toFixed(1)}–
-            {Math.max(...points.map((p) => p.avgEF)).toFixed(1)}
-          </span>
+
+      {/* Current values summary */}
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5 mb-2">
+        <span className="text-[10px]">EF: <span className="font-bold">{group.avgEF.toFixed(2)}</span></span>
+        <span className="text-[10px] text-gray-500">HR: {Math.round(group.avgHR)}</span>
+        {group.avgVerticalOscillation != null && (
+          <span className="text-[10px] text-gray-500">VO: {group.avgVerticalOscillation.toFixed(1)}mm</span>
+        )}
+        {group.avgGroundContactTime != null && (
+          <span className="text-[10px] text-gray-500">GCT: {Math.round(group.avgGroundContactTime)}ms</span>
+        )}
+        {group.avgCadence != null && (
+          <span className="text-[10px] text-gray-500">Cad: {Math.round(group.avgCadence)}</span>
+        )}
+        {group.avgPower != null && (
+          <span className="text-[10px] text-gray-500">Pow: {Math.round(group.avgPower)}W</span>
         )}
       </div>
-      <ResponsiveContainer width="100%" height={100}>
-        <ComposedChart data={points} margin={{ top: 5, right: 5, bottom: 0, left: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-          <XAxis dataKey="dateStr" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-          <YAxis tick={{ fontSize: 9 }} domain={["auto", "auto"]} width={35} />
-          <Tooltip
-            content={({ payload }) => {
-              if (!payload?.length) return null;
-              const d = payload[0]?.payload as WorkoutPoint;
-              return (
-                <div className="bg-white border border-gray-200 rounded p-1.5 text-xs shadow">
-                  <div className="font-semibold">
-                    {d.dateStr} {d.isCurrent ? "(this run)" : ""}
-                  </div>
-                  <div>Avg EF: {d.avgEF} ({d.count} seg{d.count > 1 ? "s" : ""})</div>
-                  <div>Avg HR: {d.avgHR} bpm</div>
-                </div>
-              );
-            }}
-          />
-          <Line
-            type="monotone"
-            dataKey="avgEF"
-            stroke="#94a3b8"
-            strokeWidth={1.5}
-            dot={{ r: 2, fill: "#94a3b8" }}
-          />
-          {currentPoint && (
-            <ReferenceDot
-              x={currentPoint.dateStr}
-              y={currentPoint.avgEF}
-              r={5}
-              fill="#6366f1"
-              stroke="#fff"
-              strokeWidth={2}
-            />
-          )}
-        </ComposedChart>
-      </ResponsiveContainer>
+
+      {/* EF chart always shown */}
+      <MiniChart group={group} points={points} metricKey="avgEF" metricLabel="EF" metricUnit="" metricColor="#6366f1" formatValue={(v) => v.toFixed(2)} />
+
+      {/* Expanded: dynamics charts */}
+      {expanded && (
+        <div className="mt-2 space-y-2">
+          {availableMetrics
+            .filter((m) => m.key !== "avgEF")
+            .map((m) => (
+              <MiniChart
+                key={m.key}
+                group={group}
+                points={points}
+                metricKey={m.key}
+                metricLabel={m.label}
+                metricUnit={m.unit}
+                metricColor={m.color}
+                formatValue={m.format}
+              />
+            ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -296,12 +217,12 @@ export default function SegmentHistory({ current, allActivities }: SegmentHistor
         Segment vs History
       </h2>
       <p className="text-sm text-gray-600 mb-4">
-        Similar segments within this workout are averaged together, then
-        compared to averaged similar segments from past workouts. Purple dot = this run.
+        Similar segments averaged per workout. Purple dot = this run.
+        Click "Dynamics" to compare running dynamics over time.
       </p>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {chartsToShow.map(({ group, points }, i) => (
-          <GroupChart key={i} group={group} points={points} />
+          <GroupCard key={i} group={group} points={points} />
         ))}
       </div>
     </div>
