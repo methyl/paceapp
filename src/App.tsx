@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import FileUpload from "./components/FileUpload";
 import Summary from "./components/Summary";
 import LapTable from "./components/LapTable";
@@ -8,6 +8,7 @@ import HRComparison from "./components/HRComparison";
 import PaceComparison from "./components/PaceComparison";
 import FitnessDashboard from "./components/FitnessDashboard";
 import { parseFitFile } from "./parseFit";
+import { loadActivities, saveActivities, clearActivities } from "./storage";
 import type { ParsedActivity, WorkoutType } from "./types";
 import { WORKOUT_LABELS, WORKOUT_COLORS } from "./types";
 
@@ -17,10 +18,27 @@ function App() {
   const [activities, setActivities] = useState<ParsedActivity[]>([]);
   const [selected, setSelected] = useState<ParsedActivity | null>(null);
   const [view, setView] = useState<View>("library");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [loadProgress, setLoadProgress] = useState({ done: 0, total: 0 });
   const [error, setError] = useState("");
   const [filterType, setFilterType] = useState<WorkoutType | "all">("all");
+
+  // Load from IndexedDB on mount
+  useEffect(() => {
+    loadActivities()
+      .then((stored) => {
+        if (stored.length > 0) setActivities(stored);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Persist to IndexedDB when activities change
+  useEffect(() => {
+    if (activities.length > 0) {
+      saveActivities(activities).catch(() => {});
+    }
+  }, [activities]);
 
   const handleFiles = useCallback(
     async (files: { buffer: ArrayBuffer; name: string }[]) => {
@@ -34,7 +52,6 @@ function App() {
       for (const f of files) {
         try {
           const activity = await parseFitFile(f.buffer, f.name);
-          // Only include running activities (or unknown sport)
           if (
             !activity.summary.sport ||
             activity.summary.sport === "running" ||
@@ -66,6 +83,13 @@ function App() {
     },
     [activities.length]
   );
+
+  const handleClear = useCallback(async () => {
+    setActivities([]);
+    setSelected(null);
+    setView("library");
+    await clearActivities().catch(() => {});
+  }, []);
 
   const handleSelectActivity = (a: ParsedActivity) => {
     setSelected(a);
@@ -141,7 +165,7 @@ function App() {
 
       <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
         {/* Loading state */}
-        {loading && (
+        {loading && loadProgress.total > 0 && (
           <div className="text-center py-12">
             <div className="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
             <p className="text-gray-600 mt-3">
@@ -180,7 +204,15 @@ function App() {
               <h2 className="text-xl font-bold text-gray-900">
                 {activities.length} run{activities.length !== 1 ? "s" : ""} loaded
               </h2>
-              <FileUpload onFilesLoaded={handleFiles} multiple />
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleClear}
+                  className="text-xs text-red-500 hover:text-red-700 font-medium"
+                >
+                  Clear all
+                </button>
+                <FileUpload onFilesLoaded={handleFiles} multiple />
+              </div>
             </div>
             <ActivityList
               activities={activities}
