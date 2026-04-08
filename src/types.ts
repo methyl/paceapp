@@ -1,6 +1,5 @@
 export type WorkoutType =
   | "easy"
-  | "long"
   | "tempo"
   | "intervals"
   | "progressive"
@@ -8,9 +7,8 @@ export type WorkoutType =
   | "unknown";
 
 export const WORKOUT_LABELS: Record<WorkoutType, string> = {
-  easy: "Easy Run",
-  long: "Long Run",
-  tempo: "Tempo Run",
+  easy: "Easy",
+  tempo: "Tempo",
   intervals: "Intervals",
   progressive: "Progressive",
   race: "Race",
@@ -19,7 +17,6 @@ export const WORKOUT_LABELS: Record<WorkoutType, string> = {
 
 export const WORKOUT_COLORS: Record<WorkoutType, string> = {
   easy: "#22c55e",
-  long: "#3b82f6",
   tempo: "#f59e0b",
   intervals: "#ef4444",
   progressive: "#8b5cf6",

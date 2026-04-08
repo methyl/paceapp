@@ -82,7 +82,7 @@ export function detectWorkoutType(
  */
 function checkEasyByHR(
   laps: LapSummary[],
-  summary: ActivitySummary,
+  _summary: ActivitySummary,
   z2Ceiling: number
 ): WorkoutType | null {
   const lapsWithHR = laps.filter((l) => l.avgHeartRate != null);
@@ -112,9 +112,7 @@ function checkEasyByHR(
   const easyRatio = easyTime / totalTime;
 
   if (easyRatio >= 0.70) {
-    const isLong =
-      summary.totalElapsedTime > 3600 || summary.totalDistance > 14000;
-    return isLong ? "long" : "easy";
+    return "easy";
   }
 
   return null;
