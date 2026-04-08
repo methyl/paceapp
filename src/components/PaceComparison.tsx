@@ -11,8 +11,10 @@ import {
   Bar,
   Cell,
 } from "recharts";
-import type { ParsedActivity, LapSummary } from "../types";
+import type { ParsedActivity } from "../types";
 import { WORKOUT_LABELS, WORKOUT_COLORS } from "../types";
+import { computePriorLoad } from "../fitness";
+import type { LoadCategory } from "../fitness";
 
 interface PaceComparisonProps {
   activities: ParsedActivity[];
@@ -47,41 +49,20 @@ function paceToStr(secPerKm: number): string {
   return `${min}:${sec.toString().padStart(2, "0")}`;
 }
 
-function computePriorLoad(laps: LapSummary[], upToIndex: number): {
-  load: number;
+function getPriorLoadForSegment(laps: ParsedActivity["segments"], upToIndex: number): {
+  load: LoadCategory;
+  work: number;
   distance: number;
   avgSpeed: number;
   avgHR: number;
 } {
-  const prior = laps.slice(0, upToIndex);
-  if (prior.length === 0) {
-    return { load: 0, distance: 0, avgSpeed: 0, avgHR: 0 };
-  }
-
-  let totalWork = 0;
-  let totalTime = 0;
-  let totalDist = 0;
-  let hrSum = 0;
-  let hrCount = 0;
-
-  for (const lap of prior) {
-    const speed = lap.avgSpeed ?? 0;
-    const time = lap.totalElapsedTime;
-    // Work = speed * time (approximation of training load for that segment)
-    totalWork += speed * time;
-    totalTime += time;
-    totalDist += lap.totalDistance;
-    if (lap.avgHeartRate != null) {
-      hrSum += lap.avgHeartRate * time;
-      hrCount += time;
-    }
-  }
-
+  const result = computePriorLoad(laps, upToIndex);
   return {
-    load: totalWork,
-    distance: totalDist / 1000,
-    avgSpeed: totalTime > 0 ? totalDist / totalTime : 0,
-    avgHR: hrCount > 0 ? hrSum / hrCount : 0,
+    load: result.load,
+    work: result.work,
+    distance: result.distance,
+    avgSpeed: result.avgSpeed,
+    avgHR: result.avgHR,
   };
 }
 
@@ -103,7 +84,7 @@ function findMatchingSegments(
       const secPerKm = 1000 / lap.avgSpeed;
       if (secPerKm < minPace || secPerKm > maxPace) continue;
 
-      const prior = computePriorLoad(a.segments, i);
+      const prior = getPriorLoadForSegment(a.segments, i);
       const relPos = a.segments.length > 1 ? i / (a.segments.length - 1) : 0;
 
       let positionLabel: string;
@@ -133,12 +114,12 @@ function findMatchingSegments(
         pace: Math.round(secPerKm),
         paceLabel: paceToStr(secPerKm),
         hr: Math.round(lap.avgHeartRate),
-        priorLoad: prior.load,
-        priorLoadLabel: prior.load < 1000
+        priorLoad: prior.work,
+        priorLoadLabel: prior.load === "fresh"
           ? "Fresh"
-          : prior.load < 5000
+          : prior.load === "light"
             ? "Light"
-            : prior.load < 15000
+            : prior.load === "moderate"
               ? "Moderate"
               : "Heavy",
         priorDistance: +prior.distance.toFixed(1),

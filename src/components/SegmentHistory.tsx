@@ -10,7 +10,7 @@ import {
   ReferenceDot,
 } from "recharts";
 import type { ParsedActivity, LapSummary } from "../types";
-import { efficiencyFactor } from "../fitness";
+import { efficiencyFactor, computePriorLoad } from "../fitness";
 import type { LoadCategory } from "../fitness";
 import { getDistanceBucket, type DistanceBucket } from "../labeller";
 
@@ -19,17 +19,8 @@ interface SegmentHistoryProps {
   allActivities: ParsedActivity[];
 }
 
-const LOAD_THRESHOLDS = { light: 1000, moderate: 5000, heavy: 15000 };
-
 function priorLoadCategory(segs: LapSummary[], upToIndex: number): LoadCategory {
-  let work = 0;
-  for (let i = 0; i < upToIndex; i++) {
-    work += (segs[i].avgSpeed ?? 0) * segs[i].totalElapsedTime;
-  }
-  if (work < LOAD_THRESHOLDS.light) return "fresh";
-  if (work < LOAD_THRESHOLDS.moderate) return "light";
-  if (work < LOAD_THRESHOLDS.heavy) return "moderate";
-  return "heavy";
+  return computePriorLoad(segs, upToIndex).load;
 }
 
 function paceStr(speedMps: number): string {

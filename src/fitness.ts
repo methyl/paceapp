@@ -1,4 +1,5 @@
 import type { ParsedActivity, LapSummary, WorkoutType } from "./types";
+import { getZ2Ceiling } from "./detectWorkout";
 
 /**
  * Efficiency Factor = (speed m/s) / (heart rate bpm) × 1000
@@ -13,14 +14,33 @@ export function efficiencyFactor(speedMps: number, hr: number): number {
 
 export type LoadCategory = "fresh" | "light" | "moderate" | "heavy";
 
+/**
+ * Prior load thresholds using intensity-weighted work.
+ * Work = speed * time * intensity_multiplier, where intensity is
+ * based on HR relative to Z2. A hard 1km interval at 157bpm counts
+ * much more than a slow 1km jog at 120bpm.
+ */
 export const LOAD_THRESHOLDS = {
-  /** speed(m/s) * time(s) cumulative before this lap */
-  light: 1000,
-  moderate: 5000,
-  heavy: 15000,
+  light: 800,
+  moderate: 3000,
+  heavy: 10000,
 };
 
-function computePriorLoad(laps: LapSummary[], upToIndex: number) {
+/**
+ * HR intensity multiplier relative to Z2 ceiling.
+ *   HR < Z2:       1.0 (baseline)
+ *   HR = Z2:       1.0
+ *   HR = Z2 + 10%: 1.5
+ *   HR = Z2 + 20%: 2.0
+ * This means a 1km at 157bpm (Z2=140) gets multiplied by ~1.6x
+ */
+function hrIntensity(hr: number | undefined, z2: number): number {
+  if (hr == null || hr <= z2) return 1.0;
+  return 1.0 + ((hr - z2) / z2) * 5;
+}
+
+export function computePriorLoad(laps: LapSummary[], upToIndex: number) {
+  const z2 = getZ2Ceiling();
   let totalWork = 0;
   let totalTime = 0;
   let totalDist = 0;
@@ -31,7 +51,8 @@ function computePriorLoad(laps: LapSummary[], upToIndex: number) {
     const lap = laps[i];
     const speed = lap.avgSpeed ?? 0;
     const time = lap.totalElapsedTime;
-    totalWork += speed * time;
+    const intensity = hrIntensity(lap.avgHeartRate, z2);
+    totalWork += speed * time * intensity;
     totalTime += time;
     totalDist += lap.totalDistance;
     if (lap.avgHeartRate != null) {
