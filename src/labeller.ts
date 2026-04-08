@@ -1,5 +1,5 @@
 import type { LapSummary } from "./types";
-import { getZ2Ceiling } from "./detectWorkout";
+
 
 /**
  * Standard interval distance buckets.
@@ -73,8 +73,6 @@ export function generateWorkoutLabel(
     return `${distLabel(totalDistance)} ${workoutType}`;
   }
 
-  const z2 = getZ2Ceiling();
-
   // Classify each segment as easy, fast, or recovery
   const speeds = segments
     .filter((s) => s.avgSpeed && s.avgSpeed > 0)
@@ -88,19 +86,19 @@ export function generateWorkoutLabel(
   for (const seg of segments) {
     if (!seg.avgSpeed || seg.avgSpeed <= 0) continue;
 
-    const isEasyHR = seg.avgHeartRate != null && seg.avgHeartRate <= z2;
     const isFast = seg.avgSpeed > medianSpeed * 1.08;
     const isSlow = seg.avgSpeed < medianSpeed * 0.92;
 
     let type: "easy" | "fast" | "recovery";
     if (isFast) {
       type = "fast";
-    } else if (isSlow || isEasyHR) {
-      // Clearly slower than the workout's median or low HR = easy/recovery
+    } else if (isSlow) {
+      // Clearly slower than the workout's median = easy/recovery
       type = "easy";
     } else {
-      // Near median pace, HR above Z2 — for steady/tempo/race this is the
-      // main effort; for intervals/mixed this is likely a moderate segment
+      // Pace is consistent with the rest of the run — don't break it out
+      // as easy just because HR hasn't caught up yet (first km effect).
+      // Only HR is not enough to split; pace must differ.
       type = workoutType === "easy" ? "easy" : "fast";
     }
 
