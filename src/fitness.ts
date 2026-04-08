@@ -265,7 +265,7 @@ export function computeFitness(
   const allSegments = computeSegmentEFs(activities);
 
   // Prefer steady runs for the score, but fall back to all
-  const steadyTypes: WorkoutType[] = ["easy", "tempo"];
+  const steadyTypes: WorkoutType[] = ["easy", "steady", "tempo"];
   const steadyEFs = allEFs.filter((a) => steadyTypes.includes(a.workoutType));
   const source = steadyEFs.length >= 3 ? steadyEFs : allEFs;
 

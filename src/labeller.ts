@@ -191,7 +191,13 @@ export function generateWorkoutLabel(
     const avgPace = paceStr(
       classified.reduce((s, b) => s + b.avgSpeed, 0) / classified.length
     );
-    const typeLabel = workoutType === "race" ? "race" : workoutType === "tempo" ? "tempo" : "run";
+    const TYPE_LABELS: Record<string, string> = {
+      race: "race",
+      tempo: "tempo",
+      steady: "steady",
+      progressive: "progressive",
+    };
+    const typeLabel = TYPE_LABELS[workoutType] ?? "run";
     return `${distLabel(totalDistance)} ${typeLabel} @${avgPace}`;
   }
 

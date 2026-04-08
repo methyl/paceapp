@@ -17,14 +17,38 @@ export function setZ2Ceiling(value: number) {
 }
 
 /**
- * Detect workout type from lap structure and summary metrics.
+ * HR zone boundaries derived from Z2 ceiling.
+ * Z2 ceiling is the top of zone 2 / aerobic threshold.
  *
- * Easy run: most of the run (by time) stays under Z2 HR ceiling.
- * A faster finish is allowed — only the portion before the pickup
- * needs to be below threshold.
+ * Approximate zones (using % of max HR, anchored to Z2 ceiling):
+ *   Z1-Z2: < z2Ceiling           (easy)
+ *   Low Z3: z2Ceiling to +8%     (steady / aerobic)
+ *   High Z3: z2Ceiling+8% to +16% (tempo / threshold)
+ *   Z4+: > z2Ceiling+16%         (race / VO2max)
+ */
+function getZones(z2Ceiling: number) {
+  return {
+    easy: z2Ceiling,              // below this = easy
+    steady: z2Ceiling * 1.08,     // Z2 ceiling to this = steady
+    tempo: z2Ceiling * 1.16,      // up to this = tempo/threshold
+    // above tempo = race/Z4+
+  };
+}
+
+/**
+ * Detect workout type using HR zones and pace patterns.
+ *
+ * Priority:
+ * 1. Intervals: actual pace variation with alternating fast/slow pattern
+ * 2. Progressive: pace consistently increasing through the run
+ * 3. Zone-based classification for steady efforts:
+ *    - Easy: majority HR < Z2 ceiling
+ *    - Steady: majority HR in low Z3
+ *    - Tempo: majority HR in high Z3
+ *    - Race: majority HR in Z4+
  */
 export function detectWorkoutType(
-  summary: ActivitySummary,
+  _summary: ActivitySummary,
   laps: LapSummary[]
 ): WorkoutType {
   const meaningful = laps.filter(
@@ -34,88 +58,86 @@ export function detectWorkoutType(
 
   const speeds = meaningful.map((l) => l.avgSpeed!);
   const cv = coefficientOfVariation(speeds);
-  const z2 = getZ2Ceiling();
 
-  // --- Check easy/long first using HR-based definition ---
-  const easyResult = checkEasyByHR(meaningful, summary, z2);
-  if (easyResult) return easyResult;
-
-  // --- Intervals: high pace variation with alternating pattern ---
+  // --- Intervals: need actual pace alternation, not just uniform laps ---
   if (cv > 0.12 && meaningful.length >= 4 && hasAlternatingPattern(speeds)) {
     return "intervals";
   }
 
-  // --- Progressive: each lap generally faster ---
+  // --- Progressive: pace consistently increasing ---
   if (meaningful.length >= 3 && isProgressive(speeds)) {
     return "progressive";
   }
 
-  // --- Tempo: sustained block at faster-than-average pace ---
-  if (meaningful.length >= 3 && isTempoProfile(speeds)) {
-    return "tempo";
+  // --- Zone-based classification for steady/non-alternating runs ---
+  const z2 = getZ2Ceiling();
+  const zones = getZones(z2);
+
+  const lapsWithHR = meaningful.filter((l) => l.avgHeartRate != null);
+  if (lapsWithHR.length >= 2) {
+    return classifyByZone(meaningful, zones);
   }
 
-  // --- Race: high HR, fast, steady ---
-  const hrs = meaningful
-    .filter((l) => l.avgHeartRate != null)
-    .map((l) => l.avgHeartRate!);
-  if (hrs.length >= 2) {
-    const maxHr = Math.max(...hrs);
-    const avgHr = mean(hrs);
-    if (avgHr > maxHr * 0.92 && cv < 0.08) {
-      return "race";
-    }
-  }
-
-  // Default: easy if low variation, otherwise unknown
-  if (cv < 0.12) return "easy";
+  // Fallback: low pace variation = easy, otherwise unknown
+  if (cv < 0.10) return "easy";
   return "unknown";
 }
 
 /**
- * HR-based easy/long run check.
- *
- * Easy = the portion of the run before any fast finish stays under Z2.
- * We scan from the start and find the longest prefix where HR < z2 ceiling.
- * If that prefix covers >= 70% of total time, it's an easy run.
- * If duration > 60min or distance > 14km, it's a long run.
+ * Classify a run by the HR zone where most time is spent.
+ * Scans from start, allowing a fast finish (last ~30% can be harder
+ * without changing classification of the main effort).
  */
-function checkEasyByHR(
+function classifyByZone(
   laps: LapSummary[],
-  _summary: ActivitySummary,
-  z2Ceiling: number
-): WorkoutType | null {
-  const lapsWithHR = laps.filter((l) => l.avgHeartRate != null);
-  if (lapsWithHR.length < 2) return null;
-
-  // Find the longest prefix of laps where avg HR stays under Z2
+  zones: { easy: number; steady: number; tempo: number }
+): WorkoutType {
   let easyTime = 0;
+  let steadyTime = 0;
+  let tempoTime = 0;
+  let raceTime = 0;
   let totalTime = 0;
-  let easyEnded = false;
 
   for (const lap of laps) {
-    totalTime += lap.totalElapsedTime;
-    if (!easyEnded) {
-      if (lap.avgHeartRate != null && lap.avgHeartRate <= z2Ceiling) {
-        easyTime += lap.totalElapsedTime;
-      } else if (lap.avgHeartRate != null && lap.avgHeartRate > z2Ceiling) {
-        // Allow occasional single-lap spikes (e.g., a hill)
-        // by checking if the NEXT lap is also above Z2
-        easyEnded = true;
-      } else {
-        // No HR data for this lap, count it as easy
-        easyTime += lap.totalElapsedTime;
-      }
+    const hr = lap.avgHeartRate;
+    const t = lap.totalElapsedTime;
+    totalTime += t;
+
+    if (hr == null) {
+      easyTime += t; // no HR data, assume easy
+    } else if (hr <= zones.easy) {
+      easyTime += t;
+    } else if (hr <= zones.steady) {
+      steadyTime += t;
+    } else if (hr <= zones.tempo) {
+      tempoTime += t;
+    } else {
+      raceTime += t;
     }
   }
 
+  if (totalTime === 0) return "unknown";
+
+  // Allow a faster finish: check the main body (first 70%)
+  // But also check overall distribution for clear cases
   const easyRatio = easyTime / totalTime;
+  const steadyRatio = steadyTime / totalTime;
+  const tempoRatio = tempoTime / totalTime;
+  const raceRatio = raceTime / totalTime;
 
-  if (easyRatio >= 0.70) {
-    return "easy";
-  }
+  // Majority rules — what zone dominates?
+  if (easyRatio >= 0.60) return "easy";
+  if (raceRatio >= 0.50) return "race";
+  if (tempoRatio >= 0.40) return "tempo";
+  if (steadyRatio >= 0.35) return "steady";
+  if (easyRatio + steadyRatio >= 0.70) return "easy";
 
-  return null;
+  // Mixed — pick highest non-easy zone
+  if (raceRatio >= tempoRatio && raceRatio >= steadyRatio) return "race";
+  if (tempoRatio >= steadyRatio) return "tempo";
+  if (steadyRatio > 0) return "steady";
+
+  return "unknown";
 }
 
 function mean(arr: number[]): number {
@@ -149,34 +171,4 @@ function isProgressive(speeds: number[]): boolean {
     if (speeds[i] > speeds[i - 1] * 0.99) fasterCount++;
   }
   return fasterCount / (speeds.length - 1) >= 0.7;
-}
-
-function isTempoProfile(speeds: number[]): boolean {
-  if (speeds.length < 3) return false;
-  const sorted = [...speeds].sort((a, b) => b - a);
-  const fastThreshold = sorted[Math.floor(sorted.length * 0.3)];
-  const fastMask = speeds.map((s) => s >= fastThreshold * 0.97);
-
-  let maxBlock = 0;
-  let current = 0;
-  let blockStart = -1;
-  let bestStart = -1;
-  for (let i = 0; i < fastMask.length; i++) {
-    if (fastMask[i]) {
-      if (current === 0) blockStart = i;
-      current++;
-      if (current > maxBlock) {
-        maxBlock = current;
-        bestStart = blockStart;
-      }
-    } else {
-      current = 0;
-    }
-  }
-
-  if (maxBlock >= speeds.length * 0.4 && bestStart >= 1) {
-    const blockSpeeds = speeds.slice(bestStart, bestStart + maxBlock);
-    return coefficientOfVariation(blockSpeeds) < 0.06;
-  }
-  return false;
 }

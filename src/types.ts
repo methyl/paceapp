@@ -1,5 +1,6 @@
 export type WorkoutType =
   | "easy"
+  | "steady"
   | "tempo"
   | "intervals"
   | "progressive"
@@ -8,6 +9,7 @@ export type WorkoutType =
 
 export const WORKOUT_LABELS: Record<WorkoutType, string> = {
   easy: "Easy",
+  steady: "Steady",
   tempo: "Tempo",
   intervals: "Intervals",
   progressive: "Progressive",
@@ -17,6 +19,7 @@ export const WORKOUT_LABELS: Record<WorkoutType, string> = {
 
 export const WORKOUT_COLORS: Record<WorkoutType, string> = {
   easy: "#22c55e",
+  steady: "#3b82f6",
   tempo: "#f59e0b",
   intervals: "#ef4444",
   progressive: "#8b5cf6",
