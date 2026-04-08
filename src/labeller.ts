@@ -131,6 +131,7 @@ export function generateWorkoutLabel(
   // Now detect repeating fast blocks (intervals)
   // Group consecutive fast+easy pairs into interval sets
   const parts: string[] = [];
+  const consumed = new Set<number>(); // indices of recovery blocks to skip
   let i = 0;
 
   while (i < classified.length) {
@@ -151,7 +152,8 @@ export function generateWorkoutLabel(
           classified[j + 1].type === "fast" &&
           isSimilar(block, classified[j + 1])
         ) {
-          // Recovery between reps — skip it, grab next fast
+          // Recovery between reps — mark as consumed, grab next fast
+          consumed.add(j);
           reps.push(classified[j + 1]);
           j += 2;
         } else {
@@ -160,7 +162,6 @@ export function generateWorkoutLabel(
       }
 
       if (reps.length >= 2) {
-        // Format as N×dist @pace
         const bucket = reps[0].distanceBucket;
         const dist = bucket ?? distLabel(reps[0].totalDistance);
         const avgPace = paceStr(
@@ -168,14 +169,15 @@ export function generateWorkoutLabel(
         );
         parts.push(`${reps.length}×${dist} @${avgPace}`);
       } else {
-        // Single fast block (tempo)
         const dist = block.distanceBucket ?? distLabel(block.totalDistance);
         parts.push(`${dist} @${paceStr(block.avgSpeed)}`);
       }
       i = j;
-    } else {
-      // Easy block
+    } else if (!consumed.has(i)) {
+      // Easy block — only output if not consumed as recovery
       parts.push(`${distLabel(block.totalDistance)} easy`);
+      i++;
+    } else {
       i++;
     }
   }
