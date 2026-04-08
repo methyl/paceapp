@@ -90,14 +90,17 @@ export function generateWorkoutLabel(
 
     const isEasyHR = seg.avgHeartRate != null && seg.avgHeartRate <= z2;
     const isFast = seg.avgSpeed > medianSpeed * 1.08;
+    const isSlow = seg.avgSpeed < medianSpeed * 0.92;
 
     let type: "easy" | "fast" | "recovery";
     if (isFast) {
       type = "fast";
-    } else if (isEasyHR) {
+    } else if (isSlow || isEasyHR) {
+      // Clearly slower than the workout's median or low HR = easy/recovery
       type = "easy";
     } else {
-      // Not explicitly fast, not easy HR — classify based on workout type
+      // Near median pace, HR above Z2 — for steady/tempo/race this is the
+      // main effort; for intervals/mixed this is likely a moderate segment
       type = workoutType === "easy" ? "easy" : "fast";
     }
 
