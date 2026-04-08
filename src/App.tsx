@@ -7,8 +7,10 @@ import ActivityList from "./components/ActivityList";
 import HRComparison from "./components/HRComparison";
 import PaceComparison from "./components/PaceComparison";
 import FitnessDashboard from "./components/FitnessDashboard";
+import SegmentHistory from "./components/SegmentHistory";
 import { parseFitFile } from "./parseFit";
 import { loadActivities, saveActivities, clearActivities } from "./storage";
+import { getZ2Ceiling, setZ2Ceiling } from "./detectWorkout";
 import type { ParsedActivity, WorkoutType } from "./types";
 import { WORKOUT_LABELS, WORKOUT_COLORS } from "./types";
 
@@ -23,6 +25,7 @@ function App() {
   const [error, setError] = useState("");
   const [filterType, setFilterType] = useState<WorkoutType | "all">("all");
   const [showOriginalLaps, setShowOriginalLaps] = useState(false);
+  const [z2, setZ2] = useState(getZ2Ceiling);
 
   // Load from IndexedDB on mount
   useEffect(() => {
@@ -115,7 +118,8 @@ function App() {
           </button>
 
           {activities.length > 0 && (
-            <nav className="flex gap-1 bg-gray-100 rounded-lg p-1">
+            <nav className="flex items-center gap-2">
+            <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
               <button
                 onClick={() => {
                   setView("library");
@@ -159,6 +163,21 @@ function App() {
               >
                 Fitness
               </button>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-gray-500 ml-2">
+              <label htmlFor="z2">Z2:</label>
+              <input
+                id="z2"
+                type="number"
+                value={z2}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (v > 0) { setZ2(v); setZ2Ceiling(v); }
+                }}
+                className="w-14 border border-gray-300 rounded px-1.5 py-0.5 text-xs"
+              />
+              <span>bpm</span>
+            </div>
             </nav>
           )}
         </div>
@@ -266,6 +285,9 @@ function App() {
               laps={selected.segmentsDetected && !showOriginalLaps ? selected.segments : selected.laps}
               records={selected.records}
             />
+            {activities.length >= 2 && (
+              <SegmentHistory current={selected} allActivities={activities} />
+            )}
           </>
         )}
 
