@@ -1,4 +1,5 @@
 import FitParser from "fit-file-parser";
+import { detectWorkoutType } from "./detectWorkout";
 import type { ParsedActivity, LapSummary, RecordPoint, ActivitySummary } from "./types";
 
 function speedToPace(speedMps: number): string {
@@ -15,7 +16,12 @@ function formatTime(seconds: number): string {
   return `${min}:${sec.toString().padStart(2, "0")}`;
 }
 
-export async function parseFitFile(buffer: ArrayBuffer): Promise<ParsedActivity> {
+let idCounter = 0;
+
+export async function parseFitFile(
+  buffer: ArrayBuffer,
+  fileName: string
+): Promise<ParsedActivity> {
   const parser = new FitParser({
     force: true,
     speedUnit: "m/s",
@@ -78,7 +84,6 @@ export async function parseFitFile(buffer: ArrayBuffer): Promise<ParsedActivity>
   if (records.length === 0 && data.records) {
     let currentLap = 0;
     for (const rec of data.records) {
-      // Assign records to laps based on timestamp
       while (
         currentLap < laps.length - 1 &&
         new Date(rec.timestamp) >= new Date(laps[currentLap + 1].startTime)
@@ -122,7 +127,16 @@ export async function parseFitFile(buffer: ArrayBuffer): Promise<ParsedActivity>
     avgPower: session?.avg_power,
   };
 
-  return { summary, laps, records };
+  const workoutType = detectWorkoutType(summary, laps);
+
+  return {
+    id: `${fileName}-${++idCounter}`,
+    fileName,
+    workoutType,
+    summary,
+    laps,
+    records,
+  };
 }
 
 export { speedToPace, formatTime };
