@@ -57,7 +57,7 @@ export async function parseFitFile(buffer: ArrayBuffer): Promise<ParsedActivity>
     for (const rec of lapRecords) {
       records.push({
         timestamp: rec.timestamp,
-        elapsed: rec.elapsed_time ?? 0,
+        elapsed: (rec as unknown as Record<string, number>).elapsed_time ?? 0,
         distance: rec.distance ?? 0,
         heartRate: rec.heart_rate,
         cadence: rec.cadence != null ? rec.cadence * 2 : undefined,
@@ -75,9 +75,6 @@ export async function parseFitFile(buffer: ArrayBuffer): Promise<ParsedActivity>
   }
 
   // If cascade mode didn't nest records in laps, use top-level records
-  if (records.length === 0 && data.activity?.sessions?.[0]?.laps) {
-    // Records may be at activity level in some files
-  }
   if (records.length === 0 && data.records) {
     let currentLap = 0;
     for (const rec of data.records) {
@@ -90,7 +87,7 @@ export async function parseFitFile(buffer: ArrayBuffer): Promise<ParsedActivity>
       }
       records.push({
         timestamp: rec.timestamp,
-        elapsed: (rec as Record<string, unknown>).elapsed_time as number ?? 0,
+        elapsed: (rec as unknown as Record<string, number>).elapsed_time ?? 0,
         distance: rec.distance ?? 0,
         heartRate: rec.heart_rate,
         cadence: rec.cadence != null ? rec.cadence * 2 : undefined,
