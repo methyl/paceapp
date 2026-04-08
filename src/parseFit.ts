@@ -1,6 +1,7 @@
 import FitParser from "fit-file-parser";
 import { detectWorkoutType } from "./detectWorkout";
 import { getEffortSegments } from "./segmenter";
+import { generateWorkoutLabel } from "./labeller";
 import type { ParsedActivity, LapSummary, RecordPoint, ActivitySummary } from "./types";
 
 function speedToPace(speedMps: number): string {
@@ -132,12 +133,15 @@ export async function parseFitFile(
   const segmentsDetected = effortSegments.length > 0 && effortSegments[0].detected;
 
   // Use effort segments for workout detection — they reflect actual effort changes
-  const workoutType = detectWorkoutType(summary, segmentsDetected ? effortSegments : laps);
+  const analysisSegs = segmentsDetected ? effortSegments : laps;
+  const workoutType = detectWorkoutType(summary, analysisSegs);
+  const workoutLabel = generateWorkoutLabel(analysisSegs, summary.totalDistance, workoutType);
 
   return {
     id: `${fileName}-${++idCounter}`,
     fileName,
     workoutType,
+    workoutLabel,
     summary,
     laps,
     segments: effortSegments,
@@ -150,13 +154,16 @@ export async function parseFitFile(
 export function reprocessActivity(a: ParsedActivity): ParsedActivity {
   const effortSegments = getEffortSegments(a.laps, a.records);
   const segmentsDetected = effortSegments.length > 0 && effortSegments[0].detected;
-  const workoutType = detectWorkoutType(a.summary, segmentsDetected ? effortSegments : a.laps);
+  const analysisSegs = segmentsDetected ? effortSegments : a.laps;
+  const workoutType = detectWorkoutType(a.summary, analysisSegs);
+  const workoutLabel = generateWorkoutLabel(analysisSegs, a.summary.totalDistance, workoutType);
 
   return {
     ...a,
     segments: effortSegments,
     segmentsDetected,
     workoutType,
+    workoutLabel,
   };
 }
 

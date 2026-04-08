@@ -259,13 +259,13 @@ function App() {
                 &larr; Back to library
               </button>
               <span className="text-sm text-gray-400">|</span>
-              <span className="text-sm text-gray-500">{selected.fileName}</span>
               <span
                 className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold text-white"
                 style={{ backgroundColor: WORKOUT_COLORS[selected.workoutType] }}
               >
                 {WORKOUT_LABELS[selected.workoutType]}
               </span>
+              <span className="text-sm font-medium text-gray-700">{selected.workoutLabel}</span>
             </div>
             <Summary summary={selected.summary} />
             {selected.segmentsDetected && (

@@ -12,6 +12,7 @@ import {
 import type { ParsedActivity, LapSummary } from "../types";
 import { efficiencyFactor } from "../fitness";
 import type { LoadCategory } from "../fitness";
+import { getDistanceBucket, type DistanceBucket } from "../labeller";
 
 interface SegmentHistoryProps {
   current: ParsedActivity;
@@ -53,14 +54,12 @@ const ADJACENT_LOADS: Record<LoadCategory, LoadCategory[]> = {
 
 /** A group of similar segments from the current workout */
 interface SegmentGroup {
-  /** Representative pace for the group */
   avgSpeed: number;
   avgPace: string;
-  /** Representative load */
   load: LoadCategory;
-  /** Segments in this group from the current workout */
+  /** Distance bucket for matching (e.g., "1km", "400m", "strides") */
+  distBucket: DistanceBucket;
   segments: { seg: LapSummary; index: number }[];
-  /** Averaged EF of this group */
   avgEF: number;
   avgHR: number;
 }
@@ -90,16 +89,19 @@ function groupCurrentSegments(activity: ParsedActivity): SegmentGroup[] {
 
     const pace = 1000 / seg.avgSpeed;
     const load = priorLoadCategory(activity.segments, i);
+    const distBucket = getDistanceBucket(seg.totalDistance);
 
-    // Try to find an existing group with similar pace and same load
+    // Group by: similar pace + same load + same distance bucket
     const existing = groups.find((g) => {
       const gPace = 1000 / g.avgSpeed;
-      return Math.abs(pace - gPace) <= 15 && g.load === load;
+      const paceMatch = Math.abs(pace - gPace) <= 15;
+      const loadMatch = g.load === load;
+      const distMatch = g.distBucket === distBucket;
+      return paceMatch && loadMatch && distMatch;
     });
 
     if (existing) {
       existing.segments.push({ seg, index: i });
-      // Update group averages
       const n = existing.segments.length;
       const allSegs = existing.segments.map((s) => s.seg);
       existing.avgSpeed = allSegs.reduce((s, v) => s + (v.avgSpeed ?? 0), 0) / n;
@@ -113,6 +115,7 @@ function groupCurrentSegments(activity: ParsedActivity): SegmentGroup[] {
         avgSpeed: seg.avgSpeed,
         avgPace: paceStr(seg.avgSpeed),
         load,
+        distBucket,
         segments: [{ seg, index: i }],
         avgEF: efficiencyFactor(seg.avgSpeed, seg.avgHeartRate),
         avgHR: seg.avgHeartRate,
@@ -150,6 +153,10 @@ function findHistoricalPoints(
 
       const load = priorLoadCategory(segs, i);
       if (!allowedLoads.includes(load)) continue;
+
+      // Match distance bucket — 1km reps only compare to 1km reps
+      const segBucket = getDistanceBucket(seg.totalDistance);
+      if (group.distBucket !== segBucket) continue;
 
       if (!workoutMap.has(a.id)) {
         workoutMap.set(a.id, {
@@ -205,13 +212,13 @@ function GroupChart({
     <div className="bg-gray-50 rounded-lg border border-gray-100 p-3">
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs font-semibold text-gray-700">
-          {group.avgPace}/km
+          {group.distBucket ? `${group.distBucket} ` : ""}{group.avgPace}/km
           <span className="font-normal text-gray-500 ml-1">
             — {LOAD_LABELS[group.load]} load
           </span>
           {group.segments.length > 1 && (
             <span className="font-normal text-gray-400 ml-1">
-              ({group.segments.length} segs averaged)
+              ({group.segments.length}× averaged)
             </span>
           )}
         </span>

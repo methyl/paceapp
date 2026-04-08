@@ -78,6 +78,8 @@ export interface ParsedActivity {
   id: string;
   fileName: string;
   workoutType: WorkoutType;
+  /** Smart training notation, e.g. "2km easy + 4×1km @3:50 + 2km easy" */
+  workoutLabel: string;
   summary: ActivitySummary;
   laps: LapSummary[];
   /** Effort-based segments: detected from pace changes if auto-lap, otherwise same as laps */

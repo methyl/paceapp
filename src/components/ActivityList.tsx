@@ -86,6 +86,7 @@ export default function ActivityList({
             <tr className="bg-gray-50 text-gray-600 text-left">
               <th className="px-3 py-2.5 font-semibold">Date</th>
               <th className="px-3 py-2.5 font-semibold">Type</th>
+              <th className="px-3 py-2.5 font-semibold">Workout</th>
               <th className="px-3 py-2.5 font-semibold">Distance</th>
               <th className="px-3 py-2.5 font-semibold">Duration</th>
               <th className="px-3 py-2.5 font-semibold">Pace</th>
@@ -111,6 +112,9 @@ export default function ActivityList({
                 </td>
                 <td className="px-3 py-2.5">
                   <WorkoutBadge type={a.workoutType} />
+                </td>
+                <td className="px-3 py-2.5 text-xs text-gray-700 max-w-[220px] truncate" title={a.workoutLabel}>
+                  {a.workoutLabel}
                 </td>
                 <td className="px-3 py-2.5">
                   {(a.summary.totalDistance / 1000).toFixed(2)} km
