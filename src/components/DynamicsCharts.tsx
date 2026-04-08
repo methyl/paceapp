@@ -64,7 +64,7 @@ function LapBarChart({
             tickFormatter={(v: number) => v.toFixed(1)}
           />
           <Tooltip
-            formatter={(value: number) => [`${value.toFixed(1)} ${unit}`, label]}
+            formatter={(value: number | string) => [`${Number(value).toFixed(1)} ${unit}`, label]}
             contentStyle={{ fontSize: 13 }}
           />
           <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} opacity={0.85} />
