@@ -22,7 +22,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
-# Test fixtures (binary FIT files)
-test/fixtures/
-Archive.zip
