@@ -67,12 +67,7 @@ export function generateWorkoutLabel(
     return `${distLabel(totalDistance)} ${workoutType}`;
   }
 
-  // Easy/steady: always one block
-  if (workoutType === "easy" || workoutType === "steady") {
-    return `${distLabel(totalDistance)} ${workoutType}`;
-  }
-
-  // Race/tempo without intervals: one block with pace
+  // Race/tempo: one block with pace
   if (workoutType === "race" || workoutType === "tempo") {
     const speeds = segments
       .filter((s) => s.avgSpeed && s.avgSpeed > 0 && s.totalDistance > 100)
@@ -84,38 +79,42 @@ export function generateWorkoutLabel(
     return `${distLabel(totalDistance)} ${workoutType}`;
   }
 
-  // For intervals/progressive: find the structure
-  return labelStructuredWorkout(segments, totalDistance, workoutType);
+  // Try to find interval/stride structure (works for all types including easy)
+  const structured = labelStructuredWorkout(segments, totalDistance, workoutType);
+  if (structured) return structured;
+
+  // Fallback: simple label
+  return `${distLabel(totalDistance)} ${workoutType}`;
 }
 
+/** Returns structured label or null if no interval structure found */
 function labelStructuredWorkout(
   segments: LapSummary[],
   totalDistance: number,
   workoutType: string
-): string {
-  // Split segments into fast and slow based on speed relative to the median
+): string | null {
   const withSpeed = segments.filter(
     (s) => s.avgSpeed && s.avgSpeed > 0 && s.totalDistance > 50
   );
-  if (withSpeed.length === 0) return `${distLabel(totalDistance)} ${workoutType}`;
+  if (withSpeed.length < 4) return null;
 
   const speeds = withSpeed.map((s) => s.avgSpeed!);
   const sorted = [...speeds].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];
 
-  // Tag each segment
+  // For easy/steady runs, use a higher threshold to only catch
+  // genuinely fast segments (strides are 20%+ faster than easy pace).
+  // For interval workouts, use a lower threshold.
+  const fastMultiplier = workoutType === "easy" || workoutType === "steady" ? 1.15 : 1.05;
+
   const tagged = withSpeed.map((seg) => {
-    const isFast = seg.avgSpeed! > median * 1.05;
+    const isFast = seg.avgSpeed! > median * fastMultiplier;
     return { seg, isFast };
   });
 
-  // Collect all fast segments (the "reps")
   const fastSegs = tagged.filter((t) => t.isFast).map((t) => t.seg);
 
-  if (fastSegs.length < 2) {
-    // Not enough structure — fall back
-    return `${distLabel(totalDistance)} ${workoutType}`;
-  }
+  if (fastSegs.length < 2) return null;
 
   // Figure out how to label the reps: distance bucket or time
   const repDistances = fastSegs.map((s) => s.totalDistance);

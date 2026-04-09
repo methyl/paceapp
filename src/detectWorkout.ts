@@ -63,13 +63,17 @@ export function detectWorkoutType(
   // Check before zone classification because strides/short intervals
   // have low overall HR (most time in recovery) but clear pace structure.
   if (cv > 0.12 && meaningful.length >= 4 && hasAlternatingPattern(speeds)) {
-    return "intervals";
-  }
-
-  // Also check for intervals embedded within a longer run (e.g., 12km easy + strides).
-  // The overall CV may be low but a sub-sequence of laps may show clear structure.
-  if (hasEmbeddedIntervals(meaningful)) {
-    return "intervals";
+    // Only classify as intervals if the structured portion is a significant
+    // part of the workout. Strides tacked onto a long easy run shouldn't
+    // override the workout type — the label captures them instead.
+    const meanSpeed = mean(speeds);
+    const fastDist = meaningful
+      .filter((l) => l.avgSpeed! > meanSpeed * 1.1)
+      .reduce((s, l) => s + l.totalDistance, 0);
+    const totalDist = meaningful.reduce((s, l) => s + l.totalDistance, 0);
+    if (fastDist / totalDist > 0.15) {
+      return "intervals";
+    }
   }
 
   // --- Zone-based classification: HR is the most reliable signal ---

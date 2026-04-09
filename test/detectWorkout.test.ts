@@ -61,12 +61,14 @@ describe("workout type detection", () => {
     expect(a.workoutType).toBe("intervals");
   });
 
-  it("detects strides at end of easy run: 2026-04-05 (12km easy + 6 strides)", async () => {
-    // 12.3km easy + 6×~75m strides with recovery + 1.4km cooldown
+  it("classifies easy run with strides as easy, not intervals: 2026-04-05", async () => {
+    // 12.3km easy + 6×~75m strides + 1.4km cooldown
+    // The main effort is easy — strides don't change the workout type
     const a = await parseFitFile(loadFixture("2026-04-05"), "test");
-    expect(a.workoutType).toBe("intervals");
+    expect(a.workoutType).toBe("easy");
+    // But the label should still show the strides
     expect(a.workoutLabel).toContain("×");
-    expect(a.workoutLabel).not.toBe("15km easy");
+    expect(a.workoutLabel).toContain("easy");
   });
 
   it("does not classify easy run as race: 2025-11-02 (7km, HR 131)", async () => {
