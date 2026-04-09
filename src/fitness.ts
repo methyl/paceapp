@@ -387,31 +387,6 @@ export function computeContextFitness(
         )
       : 0;
 
-  // Peak: best weighted score across all time points
-  // For simplicity, use the max per-context peak weighted
-  const peakScore =
-    contextWeights.length > 0
-      ? Math.round(
-          contexts
-            .filter((c) => c.points.length >= 2)
-            .reduce((s, ctx, i) => {
-              const efs = ctx.points.map((p) => p.ef);
-              const minEF = Math.min(...efs);
-              const range = (Math.max(...efs) - minEF) || 1;
-              const ctxPeak = Math.round(((ctx.peakEF - minEF) / range) * 100);
-              return s + ctxPeak * (contextWeights[i]?.weight ?? 0);
-            }, 0)
-        )
-      : 0;
-
-  // Peak date from the context with the most data
-  const bestCtx = contexts.reduce(
-    (best, c) => (c.points.length > (best?.points.length ?? 0) ? c : best),
-    contexts[0]
-  );
-  const peakDate = bestCtx
-    ? bestCtx.points.reduce((best, p) => (p.ef > best.ef ? p : best)).dateStr
-    : "-";
 
   // Trend: weighted average of per-context trends
   let trendSignal = 0;
@@ -492,12 +467,18 @@ export function computeContextFitness(
     return { date, dateStr, score: Math.max(0, Math.min(100, score)) };
   });
 
+  // Peak from the actual form curve — not a theoretical max
+  const peakPoint = formCurve.reduce(
+    (best, p) => (p.score > best.score ? p : best),
+    formCurve[0] ?? { date: new Date(), dateStr: "-", score: 0 }
+  );
+
   return {
     contexts,
     formCurve,
     currentScore: Math.max(0, Math.min(100, currentScore)),
-    peakScore: Math.max(0, Math.min(100, peakScore)),
-    peakDate,
+    peakScore: peakPoint.score,
+    peakDate: peakPoint.dateStr,
     trend,
     contextWeights,
   };
