@@ -1,7 +1,14 @@
 import type { ParsedActivity } from "./types";
 
+/**
+ * DB version is derived from CACHE_VERSION — a hash of the parsing
+ * source files injected at build time by vite.config.ts.
+ * When parseFit.ts, segmenter.ts, detectWorkout.ts, or labeller.ts
+ * change, the hash changes and the DB is wiped automatically.
+ */
+declare const __CACHE_VERSION__: number;
 const DB_NAME = "paceapp";
-const DB_VERSION = 4;
+const DB_VERSION = typeof __CACHE_VERSION__ !== "undefined" ? __CACHE_VERSION__ : 1;
 const STORE_NAME = "activities";
 
 function openDB(): Promise<IDBDatabase> {
@@ -9,7 +16,6 @@ function openDB(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
-      // Drop old store on version upgrade to force re-import
       if (db.objectStoreNames.contains(STORE_NAME)) {
         db.deleteObjectStore(STORE_NAME);
       }
