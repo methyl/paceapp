@@ -54,6 +54,13 @@ describe("workout type detection", () => {
     expect(a.workoutType).toBe("race");
   });
 
+  it("detects strides workout as intervals, not easy: 2026-03-29", async () => {
+    // 3.5km easy + 6×~230m strides with recovery + 1.4km cooldown
+    // This is NOT an easy run — it has structured fast reps
+    const a = await parseFitFile(loadFixture("2026-03-29"), "test");
+    expect(a.workoutType).toBe("intervals");
+  });
+
   it("does not classify easy run as race: 2025-11-02 (7km, HR 131)", async () => {
     const a = await parseFitFile(loadFixture("2025-11-02"), "test");
     expect(a.workoutType).not.toBe("race");

@@ -60,6 +60,12 @@ describe("workout label generation", () => {
     expect(plusCount).toBe(0);
   });
 
+  it("labels strides workout correctly: 2026-03-29", async () => {
+    const a = await parseFitFile(loadFixture("2026-03-29"), "test");
+    // Should show strides notation, not just "7km easy"
+    expect(a.workoutLabel).toContain("×");
+  });
+
   it("labels easy run simply: 2025-09-19", async () => {
     const a = await parseFitFile(loadFixture("2025-09-19"), "test");
     expect(a.workoutLabel).toContain("easy");

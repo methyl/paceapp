@@ -142,10 +142,12 @@ export async function parseFitFile(
   const effortSegments = getEffortSegments(laps, records);
   const segmentsDetected = effortSegments.length > 0 && effortSegments[0].detected;
 
-  // Use effort segments for workout detection — they reflect actual effort changes
-  const analysisSegs = segmentsDetected ? effortSegments : laps;
-  const workoutType = detectWorkoutType(summary, analysisSegs);
-  const workoutLabel = generateWorkoutLabel(analysisSegs, summary.totalDistance, workoutType);
+  // Use original laps for workout type detection — they reflect the runner's
+  // intended structure. Chunked segments dilute CV (e.g., strides workout with
+  // 3km warmup chunked into 3×1km makes the overall CV look low).
+  // Use chunked segments for labelling since they provide better detail.
+  const workoutType = detectWorkoutType(summary, laps);
+  const workoutLabel = generateWorkoutLabel(effortSegments, summary.totalDistance, workoutType);
 
   return {
     id: `${fileName}-${++idCounter}`,
@@ -164,9 +166,8 @@ export async function parseFitFile(
 export function reprocessActivity(a: ParsedActivity): ParsedActivity {
   const effortSegments = getEffortSegments(a.laps, a.records);
   const segmentsDetected = effortSegments.length > 0 && effortSegments[0].detected;
-  const analysisSegs = segmentsDetected ? effortSegments : a.laps;
-  const workoutType = detectWorkoutType(a.summary, analysisSegs);
-  const workoutLabel = generateWorkoutLabel(analysisSegs, a.summary.totalDistance, workoutType);
+  const workoutType = detectWorkoutType(a.summary, a.laps);
+  const workoutLabel = generateWorkoutLabel(effortSegments, a.summary.totalDistance, workoutType);
 
   return {
     ...a,

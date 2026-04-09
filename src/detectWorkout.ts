@@ -52,14 +52,21 @@ export function detectWorkoutType(
   laps: LapSummary[]
 ): WorkoutType {
   const meaningful = laps.filter(
-    (l) => l.totalDistance > 200 && l.avgSpeed != null && l.avgSpeed > 0
+    (l) => l.totalDistance > 100 && l.avgSpeed != null && l.avgSpeed > 0
   );
   if (meaningful.length < 2) return "unknown";
 
   const speeds = meaningful.map((l) => l.avgSpeed!);
   const cv = coefficientOfVariation(speeds);
 
-  // --- Zone-based classification first: HR is the most reliable signal ---
+  // --- Intervals first: high pace variation with alternating pattern ---
+  // Check before zone classification because strides/short intervals
+  // have low overall HR (most time in recovery) but clear pace structure.
+  if (cv > 0.12 && meaningful.length >= 4 && hasAlternatingPattern(speeds)) {
+    return "intervals";
+  }
+
+  // --- Zone-based classification: HR is the most reliable signal ---
   const z2 = getZ2Ceiling();
   const zones = getZones(z2);
   const lapsWithHR = meaningful.filter((l) => l.avgHeartRate != null);
@@ -69,13 +76,7 @@ export function detectWorkoutType(
     // If HR clearly says easy, trust it over pace patterns
     if (zoneType === "easy") return "easy";
     // If pace is steady (low CV), trust zone classification over pace patterns
-    // A run with ±10s/km variation isn't progressive — it's steady/tempo/race
     if (cv < 0.06) return zoneType;
-  }
-
-  // --- Intervals: need actual pace alternation, not just uniform laps ---
-  if (cv > 0.12 && meaningful.length >= 4 && hasAlternatingPattern(speeds)) {
-    return "intervals";
   }
 
   // --- Progressive: pace must have meaningful and consistent increase ---
