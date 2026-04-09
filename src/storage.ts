@@ -1,7 +1,7 @@
 import type { ParsedActivity } from "./types";
 
 const DB_NAME = "paceapp";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORE_NAME = "activities";
 
 function openDB(): Promise<IDBDatabase> {
