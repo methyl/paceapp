@@ -63,7 +63,7 @@ export function groupCurrentSegments(activity: ParsedActivity): SegmentGroup[] {
   for (let i = 0; i < activity.segments.length; i++) {
     const seg = activity.segments[i];
     if (!seg.avgSpeed || seg.avgSpeed <= 0 || !seg.avgHeartRate) continue;
-    if (seg.totalDistance < 200) continue;
+    if (seg.totalDistance < 50) continue;
 
     const pace = 1000 / seg.avgSpeed;
     const load = computePriorLoad(activity.segments, i).load;
@@ -147,7 +147,7 @@ export function findHistoricalPoints(
     for (let i = 0; i < segs.length; i++) {
       const seg = segs[i];
       if (!seg.avgSpeed || seg.avgSpeed <= 0 || !seg.avgHeartRate) continue;
-      if (seg.totalDistance < 200) continue;
+      if (seg.totalDistance < 50) continue;
 
       const segPace = 1000 / seg.avgSpeed;
       if (Math.abs(segPace - targetPace) > TOLERANCE) continue;
