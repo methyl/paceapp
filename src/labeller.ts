@@ -90,7 +90,7 @@ export function generateWorkoutLabel(
 /** Returns structured label or null if no interval structure found */
 function labelStructuredWorkout(
   segments: LapSummary[],
-  totalDistance: number,
+  _totalDistance: number,
   workoutType: string
 ): string | null {
   const withSpeed = segments.filter(

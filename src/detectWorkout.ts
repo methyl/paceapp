@@ -170,34 +170,6 @@ function classifyByZone(
  * - At least 2 are significantly faster than the overall median
  * - There's alternating fast/slow structure
  */
-function hasEmbeddedIntervals(laps: LapSummary[]): boolean {
-  if (laps.length < 6) return false; // need enough laps for warmup + structure
-
-  const speeds = laps.map((l) => l.avgSpeed ?? 0);
-  const overallMedian = [...speeds].sort((a, b) => a - b)[Math.floor(speeds.length / 2)];
-
-  // Find laps significantly faster than the overall median (> 20% faster)
-  const fastThreshold = overallMedian * 1.20;
-  const fastIndices = speeds
-    .map((s, i) => ({ s, i }))
-    .filter((x) => x.s > fastThreshold)
-    .map((x) => x.i);
-
-  if (fastIndices.length < 2) return false;
-
-  // Check the range containing the fast laps for alternating pattern
-  const firstFast = fastIndices[0];
-  const lastFast = fastIndices[fastIndices.length - 1];
-  const subLaps = laps.slice(Math.max(0, firstFast - 1), lastFast + 2);
-
-  if (subLaps.length < 4) return false;
-
-  const subSpeeds = subLaps.map((l) => l.avgSpeed ?? 0);
-  const subCV = coefficientOfVariation(subSpeeds);
-
-  return subCV > 0.12 && hasAlternatingPattern(subSpeeds);
-}
-
 function mean(arr: number[]): number {
   return arr.reduce((s, v) => s + v, 0) / arr.length;
 }
