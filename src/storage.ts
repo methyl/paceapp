@@ -1,6 +1,8 @@
 import type { ParsedActivity } from "./types";
 
-const DB_NAME = "paceapp";
+// Use a new DB name to avoid version conflicts from previous iterations
+// that used auto-incrementing or hash-based version numbers.
+const DB_NAME = "paceapp-v2";
 const DB_VERSION = 1;
 const STORE_NAME = "activities";
 
@@ -30,10 +32,9 @@ export async function loadActivities(): Promise<ParsedActivity[]> {
 }
 
 /**
- * Save only the stable raw data — laps, records, summary.
- * Derived fields (segments, workoutType, workoutLabel) are recomputed
- * on every load via reprocessActivity, so algorithm changes take
- * effect without re-importing FIT files.
+ * Saves activities to IndexedDB. Raw data (laps, records, summary)
+ * persists across deploys. Derived fields (segments, workoutType,
+ * workoutLabel) are recomputed on every load via reprocessActivity.
  */
 export async function saveActivities(activities: ParsedActivity[]): Promise<void> {
   const db = await openDB();
