@@ -61,6 +61,14 @@ describe("workout type detection", () => {
     expect(a.workoutType).toBe("intervals");
   });
 
+  it("detects strides at end of easy run: 2026-04-05 (12km easy + 6 strides)", async () => {
+    // 12.3km easy + 6×~75m strides with recovery + 1.4km cooldown
+    const a = await parseFitFile(loadFixture("2026-04-05"), "test");
+    expect(a.workoutType).toBe("intervals");
+    expect(a.workoutLabel).toContain("×");
+    expect(a.workoutLabel).not.toBe("15km easy");
+  });
+
   it("does not classify easy run as race: 2025-11-02 (7km, HR 131)", async () => {
     const a = await parseFitFile(loadFixture("2025-11-02"), "test");
     expect(a.workoutType).not.toBe("race");

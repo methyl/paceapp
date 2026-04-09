@@ -52,7 +52,7 @@ export function detectWorkoutType(
   laps: LapSummary[]
 ): WorkoutType {
   const meaningful = laps.filter(
-    (l) => l.totalDistance > 100 && l.avgSpeed != null && l.avgSpeed > 0
+    (l) => l.totalDistance > 50 && l.avgSpeed != null && l.avgSpeed > 0
   );
   if (meaningful.length < 2) return "unknown";
 
@@ -63,6 +63,12 @@ export function detectWorkoutType(
   // Check before zone classification because strides/short intervals
   // have low overall HR (most time in recovery) but clear pace structure.
   if (cv > 0.12 && meaningful.length >= 4 && hasAlternatingPattern(speeds)) {
+    return "intervals";
+  }
+
+  // Also check for intervals embedded within a longer run (e.g., 12km easy + strides).
+  // The overall CV may be low but a sub-sequence of laps may show clear structure.
+  if (hasEmbeddedIntervals(meaningful)) {
     return "intervals";
   }
 
@@ -149,6 +155,43 @@ function classifyByZone(
   if (steadyRatio > 0) return "steady";
 
   return "unknown";
+}
+
+/**
+ * Look for an interval/stride pattern embedded within a longer run.
+ * E.g., 12km easy + 6 strides — overall CV is low because the big
+ * easy block dominates, but the strides have clear fast/slow alternation.
+ *
+ * Scans for any sub-sequence of >= 4 consecutive laps where:
+ * - At least 2 are significantly faster than the overall median
+ * - There's alternating fast/slow structure
+ */
+function hasEmbeddedIntervals(laps: LapSummary[]): boolean {
+  if (laps.length < 6) return false; // need enough laps for warmup + structure
+
+  const speeds = laps.map((l) => l.avgSpeed ?? 0);
+  const overallMedian = [...speeds].sort((a, b) => a - b)[Math.floor(speeds.length / 2)];
+
+  // Find laps significantly faster than the overall median (> 20% faster)
+  const fastThreshold = overallMedian * 1.20;
+  const fastIndices = speeds
+    .map((s, i) => ({ s, i }))
+    .filter((x) => x.s > fastThreshold)
+    .map((x) => x.i);
+
+  if (fastIndices.length < 2) return false;
+
+  // Check the range containing the fast laps for alternating pattern
+  const firstFast = fastIndices[0];
+  const lastFast = fastIndices[fastIndices.length - 1];
+  const subLaps = laps.slice(Math.max(0, firstFast - 1), lastFast + 2);
+
+  if (subLaps.length < 4) return false;
+
+  const subSpeeds = subLaps.map((l) => l.avgSpeed ?? 0);
+  const subCV = coefficientOfVariation(subSpeeds);
+
+  return subCV > 0.12 && hasAlternatingPattern(subSpeeds);
 }
 
 function mean(arr: number[]): number {
