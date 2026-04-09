@@ -15,6 +15,7 @@ import {
   type FitnessContext,
   type ContextPoint,
 } from "../fitness";
+import { computeTSB } from "../tsb";
 
 interface FitnessDashboardProps {
   activities: ParsedActivity[];
@@ -167,6 +168,8 @@ export default function FitnessDashboard({ activities }: FitnessDashboardProps) 
     [activities]
   );
 
+  const tsb = useMemo(() => computeTSB(activities), [activities]);
+
   const [showAll, setShowAll] = useState(false);
 
   if (fitness.contexts.length === 0) {
@@ -260,6 +263,60 @@ export default function FitnessDashboard({ activities }: FitnessDashboardProps) 
           </ResponsiveContainer>
         </div>
       )}
+
+      {/* TSB chart */}
+      {tsb.points.length >= 7 && (() => {
+        // Downsample to ~1 point per day, max 200 points
+        const step = Math.max(1, Math.floor(tsb.points.length / 200));
+        const data = tsb.points
+          .filter((_, i) => i % step === 0 || i === tsb.points.length - 1)
+          .map((p) => ({
+            dateStr: p.dateStr,
+            ctl: p.ctl,
+            atl: p.atl,
+            tsb: p.tsb,
+          }));
+        return (
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-1">Training Load (TSB Model)</h3>
+            <p className="text-xs text-gray-500 mb-2">
+              CTL (fitness, 42d) = {tsb.currentCTL.toFixed(0)} &nbsp;
+              ATL (fatigue, 7d) = {tsb.currentATL.toFixed(0)} &nbsp;
+              TSB (form) = {tsb.currentTSB > 0 ? "+" : ""}{tsb.currentTSB}
+            </p>
+            <ResponsiveContainer width="100%" height={200}>
+              <ComposedChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="dateStr" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 10 }} />
+                <ReferenceLine y={0} stroke="#94a3b8" strokeDasharray="4 2" />
+                <Tooltip
+                  content={({ payload }) => {
+                    if (!payload?.length) return null;
+                    const d = payload[0]?.payload as (typeof data)[0];
+                    return (
+                      <div className="bg-white border border-gray-200 rounded p-1.5 text-xs shadow">
+                        <div className="font-semibold">{d.dateStr}</div>
+                        <div style={{ color: "#3b82f6" }}>CTL (fitness): {d.ctl}</div>
+                        <div style={{ color: "#ef4444" }}>ATL (fatigue): {d.atl}</div>
+                        <div style={{ color: "#22c55e" }}>TSB (form): {d.tsb > 0 ? "+" : ""}{d.tsb}</div>
+                      </div>
+                    );
+                  }}
+                />
+                <Line type="monotone" dataKey="ctl" name="CTL" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="atl" name="ATL" stroke="#ef4444" strokeWidth={1.5} dot={false} />
+                <Line type="monotone" dataKey="tsb" name="TSB" stroke="#22c55e" strokeWidth={1.5} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+            <div className="flex gap-4 justify-center mt-1 text-[10px]">
+              <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-blue-500 inline-block" /> CTL (fitness)</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-red-500 inline-block" /> ATL (fatigue)</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-green-500 inline-block" /> TSB (form)</span>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Context charts */}
       <div className="flex items-center justify-between">
