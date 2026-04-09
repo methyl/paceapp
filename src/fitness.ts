@@ -231,7 +231,7 @@ const LOAD_LABELS: Record<LoadCategory, string> = {
  */
 export function computeContextFitness(
   activities: ParsedActivity[],
-  windowSize = 4
+  windowDays = 14
 ): ContextFitness {
   const allSegs = computeSegmentEFs(activities);
 
@@ -305,10 +305,14 @@ export function computeContextFitness(
 
     points.sort((a, b) => a.date.getTime() - b.date.getTime());
 
-    // Compute rolling EF
-    const rollingEFs = points.map((_, i) => {
-      const window = points.slice(Math.max(0, i - windowSize + 1), i + 1);
-      return window.reduce((s, p) => s + p.ef, 0) / window.length;
+    // Compute rolling EF with time-based window
+    const windowMs = windowDays * 24 * 60 * 60 * 1000;
+    const rollingEFs = points.map((p, _i) => {
+      const cutoff = p.date.getTime() - windowMs;
+      const window = points.filter(
+        (q) => q.date.getTime() >= cutoff && q.date.getTime() <= p.date.getTime()
+      );
+      return window.reduce((s, q) => s + q.ef, 0) / window.length;
     });
 
     const currentEF = rollingEFs[rollingEFs.length - 1] ?? 0;
@@ -454,8 +458,10 @@ export function computeContextFitness(
       const eligible = ctx.points.filter((p) => p.date.getTime() <= ts);
       if (eligible.length < 2) continue;
 
-      // Rolling EF scored against the global range
-      const window = eligible.slice(-windowSize);
+      // Rolling EF with time-based window
+      const cutoff = ts - windowDays * 24 * 60 * 60 * 1000;
+      const window = eligible.filter((p) => p.date.getTime() >= cutoff);
+      if (window.length === 0) continue;
       const rollingEF = window.reduce((s, p) => s + p.ef, 0) / window.length;
       const ctxScore = Math.max(0, Math.min(100, ((rollingEF - globalMinEF) / globalRange) * 100));
 
