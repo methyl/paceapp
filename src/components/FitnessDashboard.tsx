@@ -221,6 +221,46 @@ export default function FitnessDashboard({ activities }: FitnessDashboardProps) 
         </div>
       </div>
 
+      {/* Form curve */}
+      {fitness.formCurve.length >= 3 && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">Form Over Time</h3>
+          <p className="text-xs text-gray-500 mb-3">
+            Composite fitness score from all comparable contexts. Higher = fitter across all workout types.
+          </p>
+          <ResponsiveContainer width="100%" height={200}>
+            <ComposedChart
+              data={fitness.formCurve.map((p) => ({ dateStr: p.dateStr, score: p.score }))}
+              margin={{ top: 5, right: 20, bottom: 5, left: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="dateStr" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+              <YAxis tick={{ fontSize: 10 }} domain={[0, 100]} />
+              <Tooltip
+                content={({ payload }) => {
+                  if (!payload?.length) return null;
+                  const d = payload[0]?.payload as { dateStr: string; score: number };
+                  return (
+                    <div className="bg-white border border-gray-200 rounded p-1.5 text-xs shadow">
+                      <div className="font-semibold">{d.dateStr}</div>
+                      <div>Form: {d.score}/100</div>
+                    </div>
+                  );
+                }}
+              />
+              <ReferenceLine y={fitness.peakScore} stroke="#22c55e" strokeDasharray="4 2" strokeWidth={1} />
+              <Line
+                type="monotone"
+                dataKey="score"
+                stroke="#6366f1"
+                strokeWidth={2.5}
+                dot={{ r: 3, fill: "#6366f1" }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
       {/* Context charts */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-700">

@@ -185,8 +185,16 @@ export interface ContextWeight {
   score: number; // 0-100 for this context
 }
 
+export interface FormPoint {
+  date: Date;
+  dateStr: string;
+  score: number;
+}
+
 export interface ContextFitness {
   contexts: FitnessContext[];
+  /** Composite form over time */
+  formCurve: FormPoint[];
   /** Composite score from all contexts, weighted by data quality */
   currentScore: number;
   peakScore: number;
@@ -432,8 +440,61 @@ export function computeContextFitness(
     else if (avgChange < -0.02) trend = "declining";
   }
 
+  // --- Form curve: composite score at each activity date ---
+  // Collect all unique activity dates, then at each date compute
+  // the weighted score using each context's rolling EF up to that point.
+  const allDates = new Map<number, { date: Date; dateStr: string }>();
+  for (const ctx of contexts) {
+    for (const p of ctx.points) {
+      const ts = p.date.getTime();
+      if (!allDates.has(ts)) allDates.set(ts, { date: p.date, dateStr: p.dateStr });
+    }
+  }
+
+  const sortedDates = [...allDates.values()].sort(
+    (a, b) => a.date.getTime() - b.date.getTime()
+  );
+
+  // Pre-compute each context's EF range for scoring
+  const ctxRanges = contexts
+    .filter((c) => c.points.length >= 2)
+    .map((c) => {
+      const efs = c.points.map((p) => p.ef);
+      const minEF = Math.min(...efs);
+      const maxEF = Math.max(...efs);
+      return { ctx: c, minEF, range: maxEF - minEF || 1, weight: Math.sqrt(c.points.length) };
+    });
+
+  const totalW = ctxRanges.reduce((s, r) => s + r.weight, 0);
+
+  const formCurve: FormPoint[] = sortedDates.map(({ date, dateStr }) => {
+    let weightedScore = 0;
+    let usedWeight = 0;
+
+    for (const { ctx, minEF, range, weight } of ctxRanges) {
+      // Find the most recent point in this context at or before this date
+      const eligible = ctx.points.filter((p) => p.date.getTime() <= date.getTime());
+      if (eligible.length === 0) continue;
+
+      // Rolling EF: average of last `windowSize` eligible points
+      const window = eligible.slice(-windowSize);
+      const rollingEF = window.reduce((s, p) => s + p.ef, 0) / window.length;
+      const ctxScore = Math.max(0, Math.min(100, ((rollingEF - minEF) / range) * 100));
+
+      const w = weight / totalW;
+      weightedScore += ctxScore * w;
+      usedWeight += w;
+    }
+
+    // Scale up if not all contexts had data at this point
+    const score = usedWeight > 0 ? Math.round(weightedScore / usedWeight) : 0;
+
+    return { date, dateStr, score: Math.max(0, Math.min(100, score)) };
+  });
+
   return {
     contexts,
+    formCurve,
     currentScore: Math.max(0, Math.min(100, currentScore)),
     peakScore: Math.max(0, Math.min(100, peakScore)),
     peakDate,
