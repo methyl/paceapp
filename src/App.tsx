@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import FileUpload from "./components/FileUpload";
 import Summary from "./components/Summary";
 import LapTable from "./components/LapTable";
@@ -26,6 +26,10 @@ function App() {
   const [filterType, setFilterType] = useState<WorkoutType | "all">("all");
   const [showOriginalLaps, setShowOriginalLaps] = useState(false);
   const [z2, setZ2] = useState(getZ2Ceiling);
+
+  const isRunning = (a: ParsedActivity) =>
+    !a.summary.sport || a.summary.sport === "running" || a.summary.sport === "trail_running";
+  const runningActivities = useMemo(() => activities.filter(isRunning), [activities]);
 
   // Load from IndexedDB on mount, re-run segmentation with latest algorithm
   useEffect(() => {
@@ -58,13 +62,7 @@ function App() {
       for (const f of files) {
         try {
           const activity = await parseFitFile(f.buffer, f.name);
-          if (
-            !activity.summary.sport ||
-            activity.summary.sport === "running" ||
-            activity.summary.sport === "trail_running"
-          ) {
-            parsed.push(activity);
-          }
+          parsed.push(activity);
         } catch {
           failed++;
         }
@@ -224,7 +222,7 @@ function App() {
           <>
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold text-gray-900">
-                {activities.length} run{activities.length !== 1 ? "s" : ""} loaded
+                {runningActivities.length} run{runningActivities.length !== 1 ? "s" : ""} loaded
               </h2>
               <div className="flex items-center gap-3">
                 <button
@@ -237,7 +235,7 @@ function App() {
               </div>
             </div>
             <ActivityList
-              activities={activities}
+              activities={runningActivities}
               onSelect={handleSelectActivity}
               filterType={filterType}
               onFilterChange={setFilterType}
@@ -287,20 +285,20 @@ function App() {
               laps={selected.segmentsDetected && !showOriginalLaps ? selected.segments : selected.laps}
               records={selected.records}
             />
-            {activities.length >= 2 && (
-              <SegmentHistory current={selected} allActivities={activities} />
+            {runningActivities.length >= 2 && (
+              <SegmentHistory current={selected} allActivities={runningActivities} />
             )}
           </>
         )}
 
         {/* Compare view */}
         {!loading && view === "compare" && activities.length > 0 && (
-          <HRComparison activities={activities} />
+          <HRComparison activities={runningActivities} />
         )}
 
         {/* Pace comparison view */}
         {!loading && view === "pace" && activities.length > 0 && (
-          <PaceComparison activities={activities} />
+          <PaceComparison activities={runningActivities} />
         )}
 
         {/* Fitness dashboard */}

@@ -163,9 +163,17 @@ function ContextChart({
 }
 
 export default function FitnessDashboard({ activities }: FitnessDashboardProps) {
-  const fitness = useMemo(
-    () => computeContextFitness(activities),
+  // EF analysis: running only. TSB: all activities for total training load.
+  const running = useMemo(
+    () => activities.filter((a) =>
+      !a.summary.sport || a.summary.sport === "running" || a.summary.sport === "trail_running"
+    ),
     [activities]
+  );
+
+  const fitness = useMemo(
+    () => computeContextFitness(running),
+    [running]
   );
 
   const tsb = useMemo(() => computeTSB(activities), [activities]);

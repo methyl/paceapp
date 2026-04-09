@@ -32,31 +32,37 @@ const ATL_DAYS = 7;
 /**
  * Compute TRIMP (Training Impulse) for a workout.
  *
- * Uses Bannister's TRIMP: duration (min) × delta HR ratio.
- * Delta HR ratio = (avg HR - resting HR) / (max HR - resting HR)
- *
- * We estimate resting HR as 50 and max HR from Z2 ceiling × 1.25.
- * This is approximate but works well for relative comparisons.
+ * Uses per-record HR data when available for accuracy. Falls back
+ * to session avg HR. Uses Bannister's exponential TRIMP formula.
  */
 function computeTRIMP(activity: ParsedActivity): number {
-  const avgHR = activity.summary.avgHeartRate;
-  if (!avgHR) return 0;
-
-  const duration = activity.summary.totalElapsedTime / 60; // minutes
-  if (duration <= 0) return 0;
-
   const z2 = getZ2Ceiling();
   const restingHR = 50;
-  const maxHR = z2 * 1.25; // rough estimate
-
+  const maxHR = z2 * 1.25;
   const hrReserve = maxHR - restingHR;
   if (hrReserve <= 0) return 0;
 
-  const deltaHR = (avgHR - restingHR) / hrReserve;
-  const clampedDelta = Math.max(0, Math.min(1, deltaHR));
+  // Use per-record HR for more accurate TRIMP (each record ~1 second)
+  if (activity.records.length > 10) {
+    let trimp = 0;
+    for (const rec of activity.records) {
+      if (!rec.heartRate || rec.heartRate < restingHR) continue;
+      const deltaHR = Math.min(1, (rec.heartRate - restingHR) / hrReserve);
+      // Each record is ~1 second = 1/60 minute
+      trimp += (1 / 60) * deltaHR * 0.64 * Math.exp(1.92 * deltaHR);
+    }
+    return trimp;
+  }
 
-  // Exponential weighting — higher HR counts more
-  return duration * clampedDelta * 0.64 * Math.exp(1.92 * clampedDelta);
+  // Fallback: use session average HR
+  const avgHR = activity.summary.avgHeartRate;
+  if (!avgHR) return 0;
+
+  const duration = activity.summary.totalElapsedTime / 60;
+  if (duration <= 0) return 0;
+
+  const deltaHR = Math.max(0, Math.min(1, (avgHR - restingHR) / hrReserve));
+  return duration * deltaHR * 0.64 * Math.exp(1.92 * deltaHR);
 }
 
 /**
