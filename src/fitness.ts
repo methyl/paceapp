@@ -449,34 +449,59 @@ export function computeContextFitness(
   const globalMaxEF = allEFValues.length > 0 ? Math.max(...allEFValues) : 1;
   const globalRange = globalMaxEF - globalMinEF || 1;
 
+  // Max workouts in any 14-day window across the dataset — used to normalize load bonus
+  let maxWindowWorkouts = 1;
+  for (const { date: d } of sortedDates) {
+    const cutoff = d.getTime() - windowDays * 24 * 60 * 60 * 1000;
+    const count = new Set(
+      scorableContexts.flatMap((c) =>
+        c.points
+          .filter((p) => p.date.getTime() >= cutoff && p.date.getTime() <= d.getTime())
+          .map((p) => p.activityId)
+      )
+    ).size;
+    if (count > maxWindowWorkouts) maxWindowWorkouts = count;
+  }
+
   const formCurve: FormPoint[] = sortedDates.map(({ date, dateStr }) => {
     let weightedScore = 0;
     let usedWeight = 0;
     const ts = date.getTime();
+    const cutoff = ts - windowDays * 24 * 60 * 60 * 1000;
 
     for (const ctx of scorableContexts) {
       const eligible = ctx.points.filter((p) => p.date.getTime() <= ts);
       if (eligible.length < 2) continue;
 
-      // Rolling EF with time-based window
-      const cutoff = ts - windowDays * 24 * 60 * 60 * 1000;
       const window = eligible.filter((p) => p.date.getTime() >= cutoff);
-      // Need >= 2 data points in the window from different workouts
-      // to avoid a single good/bad workout dominating the score
-      const uniqueWorkouts = new Set(window.map((p) => p.activityId)).size;
-      if (uniqueWorkouts < 2) continue;
+      if (window.length === 0) continue;
+
       const rollingEF = window.reduce((s, p) => s + p.ef, 0) / window.length;
       const ctxScore = Math.max(0, Math.min(100, ((rollingEF - globalMinEF) / globalRange) * 100));
 
-      // Weight by data IN the window, not all historical data.
-      // Stale contexts with no recent activity shouldn't dominate.
       const w = Math.sqrt(window.length);
       weightedScore += ctxScore * w;
       usedWeight += w;
     }
 
-    const score = usedWeight > 0 ? Math.round(weightedScore / usedWeight) : 0;
-    return { date, dateStr, score: Math.max(0, Math.min(100, score)) };
+    if (usedWeight === 0) return { date, dateStr, score: 0 };
+
+    const baseScore = weightedScore / usedWeight;
+
+    // Training load bonus: more workouts in the window = higher form.
+    // Running 5x/week at EF 22 is better fitness than 1x/2wks at EF 25.
+    // Bonus scales 0-20 points based on workouts relative to peak volume.
+    const windowWorkouts = new Set(
+      scorableContexts.flatMap((c) =>
+        c.points
+          .filter((p) => p.date.getTime() >= cutoff && p.date.getTime() <= ts)
+          .map((p) => p.activityId)
+      )
+    ).size;
+    const loadBonus = (windowWorkouts / maxWindowWorkouts) * 20;
+
+    const score = Math.round(Math.max(0, Math.min(100, baseScore + loadBonus)));
+    return { date, dateStr, score };
   }).filter((p) => p.score > 0);
 
   // Peak from the actual form curve — not a theoretical max
