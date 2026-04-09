@@ -46,15 +46,11 @@ export async function parseFitFile(
     const lapTime = lap.total_timer_time ?? lap.total_elapsed_time ?? 0;
     const lapDist = lap.total_distance ?? 0;
 
-    // Compute speed from distance/time as sanity check.
-    // FIT avg_speed can be wrong (e.g., includes pause time in calculation).
-    const rawSpeed = lap.avg_speed ?? lap.enhanced_avg_speed ?? 0;
+    // Always compute speed from distance/time — matches what Garmin displays.
+    // FIT avg_speed is often systematically faster than distance/time and
+    // can be wildly wrong when pauses are involved.
     const computedSpeed = lapTime > 0 ? lapDist / lapTime : 0;
-    // Use computed speed if the FIT value looks implausible (>50% off)
-    const avgSpeed =
-      computedSpeed > 0 && rawSpeed > 0 && Math.abs(rawSpeed - computedSpeed) / computedSpeed > 0.5
-        ? computedSpeed
-        : rawSpeed || computedSpeed;
+    const avgSpeed = computedSpeed || (lap.avg_speed ?? lap.enhanced_avg_speed ?? 0);
 
     const lapSummary: LapSummary = {
       lapIndex: lapIndex + 1,

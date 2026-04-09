@@ -38,6 +38,26 @@ describe("parseFitFile", () => {
     expect(lap9.avgSpeed).toBeLessThan(4);
   });
 
+  it("uses distance/time for pace instead of FIT avg_speed: 2026-03-24", async () => {
+    // Garmin displays computed pace (distance/time), not FIT avg_speed.
+    // FIT avg_speed is systematically faster than distance/time.
+    // Lap 1: Garmin shows 6:00/km, FIT avg_speed gives 5:52, distance/time gives 6:00
+    // Lap 10: Garmin shows 5:15/km, FIT avg_speed gives 4:48, distance/time gives 5:13
+    const a = await parseFitFile(loadFixture("2026-03-24"), "test");
+
+    // Lap 1: 1000m in 360s = 2.778 m/s = 6:00/km (not 5:52 from avg_speed)
+    const lap1 = a.laps[0];
+    const pace1 = lap1.avgSpeed ? 1000 / lap1.avgSpeed : 0;
+    expect(pace1).toBeGreaterThan(350); // slower than 5:50
+    expect(pace1).toBeLessThan(370);    // faster than 6:10
+
+    // Lap 10: 1000m in 313s = 3.197 m/s = 5:13/km (not 4:48 from avg_speed)
+    const lap10 = a.laps[9];
+    const pace10 = lap10.avgSpeed ? 1000 / lap10.avgSpeed : 0;
+    expect(pace10).toBeGreaterThan(305); // slower than 5:05
+    expect(pace10).toBeLessThan(325);    // faster than 5:25
+  });
+
   it("all laps have plausible pace for running activities", async () => {
     const patterns = ["2026-02-28", "2026-04-04", "2025-06-01", "2025-10-12"];
     for (const p of patterns) {

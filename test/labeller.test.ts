@@ -52,6 +52,14 @@ describe("workout label generation", () => {
     expect(easyParts).toBeLessThanOrEqual(2);
   });
 
+  it("labels 15km easy/steady run as one block, not split: 2026-03-24", async () => {
+    const a = await parseFitFile(loadFixture("2026-03-24"), "test");
+    // Should be a single block like "15km easy" or "15km steady @5:30"
+    // NOT "7km steady + 1km easy + 7km steady"
+    const plusCount = (a.workoutLabel.match(/\+/g) || []).length;
+    expect(plusCount).toBe(0);
+  });
+
   it("labels easy run simply: 2025-09-19", async () => {
     const a = await parseFitFile(loadFixture("2025-09-19"), "test");
     expect(a.workoutLabel).toContain("easy");

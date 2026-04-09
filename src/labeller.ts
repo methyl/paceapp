@@ -73,6 +73,11 @@ export function generateWorkoutLabel(
     return `${distLabel(totalDistance)} ${workoutType}`;
   }
 
+  // For easy/steady runs, don't try to split — natural pace variation isn't structure
+  if (workoutType === "easy" || workoutType === "steady") {
+    return `${distLabel(totalDistance)} ${workoutType}`;
+  }
+
   // Classify each segment as easy, fast, or recovery
   const speeds = segments
     .filter((s) => s.avgSpeed && s.avgSpeed > 0)
