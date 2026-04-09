@@ -60,10 +60,19 @@ describe("workout label generation", () => {
     expect(plusCount).toBe(0);
   });
 
-  it("labels strides workout correctly: 2026-03-29", async () => {
+  it("labels strides workout compactly with time marker: 2026-03-29", async () => {
     const a = await parseFitFile(loadFixture("2026-03-29"), "test");
-    // Should show strides notation, not just "7km easy"
+    // Should be like "3.5km easy + 6×1min @4:37 + 1.4km easy"
     expect(a.workoutLabel).toContain("×");
+    // All strides grouped as one set
+    expect((a.workoutLabel.match(/×/g) || []).length).toBe(1);
+    // Short reps at consistent ~60s should use time label, not distance
+    expect(a.workoutLabel).toMatch(/×1min/);
+    // No "run @pace" for warmup/cooldown
+    expect(a.workoutLabel).not.toMatch(/run @/);
+    // Max 3 parts: warmup + reps + cooldown
+    const parts = a.workoutLabel.split(" + ");
+    expect(parts.length).toBeLessThanOrEqual(3);
   });
 
   it("labels easy run simply: 2025-09-19", async () => {
