@@ -205,11 +205,11 @@ export interface ContextFitness {
 }
 
 function paceBand(secPerKm: number): string {
-  // Round to 30s bands
-  const rounded = Math.floor(secPerKm / 30) * 30;
+  // 1-minute bands — wide enough to group meaningful data
+  const rounded = Math.floor(secPerKm / 60) * 60;
   const fmt = (s: number) =>
     `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
-  return `${fmt(rounded)}-${fmt(rounded + 30)}`;
+  return `${fmt(rounded)}-${fmt(rounded + 60)}`;
 }
 
 function paceStr(secPerKm: number): string {
@@ -218,8 +218,8 @@ function paceStr(secPerKm: number): string {
 
 const LOAD_LABELS: Record<LoadCategory, string> = {
   fresh: "fresh",
-  light: "light",
-  moderate: "moderate",
+  light: "fresh",
+  moderate: "fatigued",
   heavy: "fatigued",
 };
 
@@ -248,12 +248,15 @@ export function computeContextFitness(
 
   for (const seg of allSegs) {
     const band = paceBand(seg.pace);
-    const key = `${band}|${seg.priorLoad}|${seg.distBucket ?? "other"}`;
+    // Collapse load into two categories for fewer, more meaningful contexts
+    const loadGroup: LoadCategory =
+      seg.priorLoad === "fresh" || seg.priorLoad === "light" ? "fresh" : "heavy";
+    const key = `${band}|${loadGroup}|${seg.distBucket ?? "other"}`;
 
     if (!contextMap.has(key)) {
       contextMap.set(key, {
         paceBand: band,
-        load: seg.priorLoad,
+        load: loadGroup,
         distBucket: seg.distBucket,
         segments: [],
       });
@@ -344,7 +347,15 @@ export function computeContextFitness(
 
   // --- Composite score from ALL contexts ---
   // Weight each context by number of data points (more data = more reliable).
-  // Score each context 0-100 within its own EF range, then weighted average.
+  // Score each context against the global EF range for real variation.
+
+  // Compute global range upfront for the current score too
+  const allCtxEFs = contexts
+    .filter((c) => c.points.length >= 2)
+    .flatMap((c) => c.points.map((p) => p.ef));
+  const gMin = allCtxEFs.length > 0 ? Math.min(...allCtxEFs) : 0;
+  const gMax = allCtxEFs.length > 0 ? Math.max(...allCtxEFs) : 1;
+  const gRange = gMax - gMin || 1;
 
   const contextWeights: ContextWeight[] = [];
   let totalWeight = 0;
@@ -352,14 +363,9 @@ export function computeContextFitness(
   for (const ctx of contexts) {
     if (ctx.points.length < 2) continue;
 
-    const efs = ctx.points.map((p) => p.ef);
-    const minEF = Math.min(...efs);
-    const maxEF = Math.max(...efs);
-    const range = maxEF - minEF || 1;
-
     const ctxScore = Math.max(
       0,
-      Math.min(100, Math.round(((ctx.currentEF - minEF) / range) * 100))
+      Math.min(100, Math.round(((ctx.currentEF - gMin) / gRange) * 100))
     );
 
     // Weight by sqrt of data points — diminishing returns for lots of data
@@ -432,28 +438,27 @@ export function computeContextFitness(
 
   const scorableContexts = contexts.filter((c) => c.points.length >= 2);
 
+  // Global EF range across all contexts for a consistent scale.
+  // Per-context scoring compressed everything to ~50.
+  const allEFValues = scorableContexts.flatMap((c) => c.points.map((p) => p.ef));
+  const globalMinEF = allEFValues.length > 0 ? Math.min(...allEFValues) : 0;
+  const globalMaxEF = allEFValues.length > 0 ? Math.max(...allEFValues) : 1;
+  const globalRange = globalMaxEF - globalMinEF || 1;
+
   const formCurve: FormPoint[] = sortedDates.map(({ date, dateStr }) => {
     let weightedScore = 0;
     let usedWeight = 0;
     const ts = date.getTime();
 
     for (const ctx of scorableContexts) {
-      // Only use data available up to this date
       const eligible = ctx.points.filter((p) => p.date.getTime() <= ts);
-      if (eligible.length < 2) continue; // need at least 2 points for a meaningful range
+      if (eligible.length < 2) continue;
 
-      // EF range from data available at this point, not future data
-      const eligibleEFs = eligible.map((p) => p.ef);
-      const minEF = Math.min(...eligibleEFs);
-      const maxEF = Math.max(...eligibleEFs);
-      const range = maxEF - minEF || 1;
-
-      // Rolling EF
+      // Rolling EF scored against the global range
       const window = eligible.slice(-windowSize);
       const rollingEF = window.reduce((s, p) => s + p.ef, 0) / window.length;
-      const ctxScore = Math.max(0, Math.min(100, ((rollingEF - minEF) / range) * 100));
+      const ctxScore = Math.max(0, Math.min(100, ((rollingEF - globalMinEF) / globalRange) * 100));
 
-      // Weight by data available at this point, not total
       const w = Math.sqrt(eligible.length);
       weightedScore += ctxScore * w;
       usedWeight += w;
