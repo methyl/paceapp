@@ -461,11 +461,16 @@ export function computeContextFitness(
       // Rolling EF with time-based window
       const cutoff = ts - windowDays * 24 * 60 * 60 * 1000;
       const window = eligible.filter((p) => p.date.getTime() >= cutoff);
-      if (window.length === 0) continue;
+      // Need >= 2 data points in the window from different workouts
+      // to avoid a single good/bad workout dominating the score
+      const uniqueWorkouts = new Set(window.map((p) => p.activityId)).size;
+      if (uniqueWorkouts < 2) continue;
       const rollingEF = window.reduce((s, p) => s + p.ef, 0) / window.length;
       const ctxScore = Math.max(0, Math.min(100, ((rollingEF - globalMinEF) / globalRange) * 100));
 
-      const w = Math.sqrt(eligible.length);
+      // Weight by data IN the window, not all historical data.
+      // Stale contexts with no recent activity shouldn't dominate.
+      const w = Math.sqrt(window.length);
       weightedScore += ctxScore * w;
       usedWeight += w;
     }
