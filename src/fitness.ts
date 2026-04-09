@@ -461,7 +461,7 @@ export function computeContextFitness(
 
     const score = usedWeight > 0 ? Math.round(weightedScore / usedWeight) : 0;
     return { date, dateStr, score: Math.max(0, Math.min(100, score)) };
-  });
+  }).filter((p) => p.score > 0);
 
   // Peak from the actual form curve — not a theoretical max
   const peakPoint = formCurve.reduce(
