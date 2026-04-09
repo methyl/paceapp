@@ -430,40 +430,36 @@ export function computeContextFitness(
     (a, b) => a.date.getTime() - b.date.getTime()
   );
 
-  // Pre-compute each context's EF range for scoring
-  const ctxRanges = contexts
-    .filter((c) => c.points.length >= 2)
-    .map((c) => {
-      const efs = c.points.map((p) => p.ef);
-      const minEF = Math.min(...efs);
-      const maxEF = Math.max(...efs);
-      return { ctx: c, minEF, range: maxEF - minEF || 1, weight: Math.sqrt(c.points.length) };
-    });
-
-  const totalW = ctxRanges.reduce((s, r) => s + r.weight, 0);
+  const scorableContexts = contexts.filter((c) => c.points.length >= 2);
 
   const formCurve: FormPoint[] = sortedDates.map(({ date, dateStr }) => {
     let weightedScore = 0;
     let usedWeight = 0;
+    const ts = date.getTime();
 
-    for (const { ctx, minEF, range, weight } of ctxRanges) {
-      // Find the most recent point in this context at or before this date
-      const eligible = ctx.points.filter((p) => p.date.getTime() <= date.getTime());
-      if (eligible.length === 0) continue;
+    for (const ctx of scorableContexts) {
+      // Only use data available up to this date
+      const eligible = ctx.points.filter((p) => p.date.getTime() <= ts);
+      if (eligible.length < 2) continue; // need at least 2 points for a meaningful range
 
-      // Rolling EF: average of last `windowSize` eligible points
+      // EF range from data available at this point, not future data
+      const eligibleEFs = eligible.map((p) => p.ef);
+      const minEF = Math.min(...eligibleEFs);
+      const maxEF = Math.max(...eligibleEFs);
+      const range = maxEF - minEF || 1;
+
+      // Rolling EF
       const window = eligible.slice(-windowSize);
       const rollingEF = window.reduce((s, p) => s + p.ef, 0) / window.length;
       const ctxScore = Math.max(0, Math.min(100, ((rollingEF - minEF) / range) * 100));
 
-      const w = weight / totalW;
+      // Weight by data available at this point, not total
+      const w = Math.sqrt(eligible.length);
       weightedScore += ctxScore * w;
       usedWeight += w;
     }
 
-    // Scale up if not all contexts had data at this point
     const score = usedWeight > 0 ? Math.round(weightedScore / usedWeight) : 0;
-
     return { date, dateStr, score: Math.max(0, Math.min(100, score)) };
   });
 
