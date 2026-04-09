@@ -68,6 +68,9 @@ export function detectWorkoutType(
     const zoneType = classifyByZone(meaningful, zones);
     // If HR clearly says easy, trust it over pace patterns
     if (zoneType === "easy") return "easy";
+    // If pace is steady (low CV), trust zone classification over pace patterns
+    // A run with ±10s/km variation isn't progressive — it's steady/tempo/race
+    if (cv < 0.06) return zoneType;
   }
 
   // --- Intervals: need actual pace alternation, not just uniform laps ---
@@ -75,8 +78,8 @@ export function detectWorkoutType(
     return "intervals";
   }
 
-  // --- Progressive: pace consistently increasing ---
-  if (meaningful.length >= 3 && isProgressive(speeds)) {
+  // --- Progressive: pace must have meaningful and consistent increase ---
+  if (cv > 0.05 && meaningful.length >= 3 && isProgressive(speeds)) {
     return "progressive";
   }
 
