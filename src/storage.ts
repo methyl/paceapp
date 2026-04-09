@@ -1,14 +1,7 @@
 import type { ParsedActivity } from "./types";
 
-/**
- * DB version is derived from CACHE_VERSION — a hash of the parsing
- * source files injected at build time by vite.config.ts.
- * When parseFit.ts, segmenter.ts, detectWorkout.ts, or labeller.ts
- * change, the hash changes and the DB is wiped automatically.
- */
-declare const __CACHE_VERSION__: number;
 const DB_NAME = "paceapp";
-const DB_VERSION = typeof __CACHE_VERSION__ !== "undefined" ? __CACHE_VERSION__ : 1;
+const DB_VERSION = 1;
 const STORE_NAME = "activities";
 
 function openDB(): Promise<IDBDatabase> {
@@ -16,10 +9,9 @@ function openDB(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (db.objectStoreNames.contains(STORE_NAME)) {
-        db.deleteObjectStore(STORE_NAME);
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: "fileName" });
       }
-      db.createObjectStore(STORE_NAME, { keyPath: "fileName" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -37,6 +29,12 @@ export async function loadActivities(): Promise<ParsedActivity[]> {
   });
 }
 
+/**
+ * Save only the stable raw data — laps, records, summary.
+ * Derived fields (segments, workoutType, workoutLabel) are recomputed
+ * on every load via reprocessActivity, so algorithm changes take
+ * effect without re-importing FIT files.
+ */
 export async function saveActivities(activities: ParsedActivity[]): Promise<void> {
   const db = await openDB();
   const tx = db.transaction(STORE_NAME, "readwrite");
