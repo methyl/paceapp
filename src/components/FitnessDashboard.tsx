@@ -191,29 +191,35 @@ export default function FitnessDashboard({ activities }: FitnessDashboardProps) 
         </p>
       </div>
 
-      {/* Overall score from primary context */}
-      {fitness.primaryContext && (
-        <div className="bg-white rounded-lg border border-gray-200 p-5">
-          <div className="flex flex-wrap items-center justify-around gap-6">
-            <ScoreGauge score={fitness.currentScore} label="Current Form" />
-            <ScoreGauge score={fitness.peakScore} label="Peak Form" />
-            <div className="text-center">
-              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Trend</div>
-              <div className="text-3xl font-bold" style={{ color: TREND_STYLE[fitness.trend].color }}>
-                {TREND_STYLE[fitness.trend].icon}
-              </div>
-              <div className="text-xs font-medium capitalize" style={{ color: TREND_STYLE[fitness.trend].color }}>
-                {fitness.trend}
-              </div>
+      {/* Composite score from all contexts */}
+      <div className="bg-white rounded-lg border border-gray-200 p-5">
+        <div className="flex flex-wrap items-center justify-around gap-6">
+          <ScoreGauge score={fitness.currentScore} label="Current Form" />
+          <ScoreGauge score={fitness.peakScore} label="Peak Form" />
+          <div className="text-center">
+            <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Trend</div>
+            <div className="text-3xl font-bold" style={{ color: TREND_STYLE[fitness.trend].color }}>
+              {TREND_STYLE[fitness.trend].icon}
             </div>
-            <div className="text-center">
-              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Based on</div>
-              <div className="text-sm font-semibold text-gray-700">{fitness.primaryContext.label}</div>
-              <div className="text-xs text-gray-500">{fitness.primaryContext.points.length} workouts</div>
+            <div className="text-xs font-medium capitalize" style={{ color: TREND_STYLE[fitness.trend].color }}>
+              {fitness.trend}
+            </div>
+          </div>
+          <div className="text-center">
+            <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Based on</div>
+            <div className="text-xs text-gray-600 max-w-[200px]">
+              {fitness.contextWeights.slice(0, 3).map((cw) => (
+                <div key={cw.label}>
+                  {cw.label}: {Math.round(cw.weight * 100)}%
+                </div>
+              ))}
+              {fitness.contextWeights.length > 3 && (
+                <div className="text-gray-400">+{fitness.contextWeights.length - 3} more</div>
+              )}
             </div>
           </div>
         </div>
-      )}
+      </div>
 
       {/* Context charts */}
       <div className="flex items-center justify-between">
@@ -235,7 +241,7 @@ export default function FitnessDashboard({ activities }: FitnessDashboardProps) 
           <ContextChart
             key={`${ctx.paceBand}-${ctx.loadCategory}-${ctx.distBucket}`}
             context={ctx}
-            isPrimary={ctx === fitness.primaryContext}
+            isPrimary={false}
           />
         ))}
       </div>

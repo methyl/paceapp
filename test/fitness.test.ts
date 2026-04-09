@@ -55,7 +55,7 @@ describe("context-based fitness", () => {
     expect(withTrend.length).toBeGreaterThan(0);
   });
 
-  it("computes an overall fitness score", async () => {
+  it("computes an overall fitness score using all contexts, not just one", async () => {
     const activities = (await loadAll()).filter(
       (a) => a.summary.sport === "running"
     );
@@ -64,5 +64,12 @@ describe("context-based fitness", () => {
     expect(fitness.currentScore).toBeGreaterThanOrEqual(0);
     expect(fitness.currentScore).toBeLessThanOrEqual(100);
     expect(fitness.trend).toMatch(/improving|stable|declining/);
+
+    // Score should be based on multiple contexts, not just one
+    expect(fitness.contextWeights.length).toBeGreaterThan(1);
+    // All weights should sum to ~1
+    const totalWeight = fitness.contextWeights.reduce((s, w) => s + w.weight, 0);
+    expect(totalWeight).toBeGreaterThan(0.9);
+    expect(totalWeight).toBeLessThan(1.1);
   });
 });

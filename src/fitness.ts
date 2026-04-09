@@ -179,15 +179,21 @@ export interface ContextPoint {
   power?: number;
 }
 
+export interface ContextWeight {
+  label: string;
+  weight: number;
+  score: number; // 0-100 for this context
+}
+
 export interface ContextFitness {
   contexts: FitnessContext[];
-  /** Overall score from the primary context (easy fresh 1km) */
+  /** Composite score from all contexts, weighted by data quality */
   currentScore: number;
   peakScore: number;
   peakDate: string;
   trend: "improving" | "stable" | "declining";
-  /** Which context drives the main score */
-  primaryContext: FitnessContext | null;
+  /** How each context contributes to the overall score */
+  contextWeights: ContextWeight[];
 }
 
 function paceBand(secPerKm: number): string {
@@ -328,60 +334,110 @@ export function computeContextFitness(
     return loadOrder[a.loadCategory] - loadOrder[b.loadCategory];
   });
 
-  // Primary context: 1km fresh/light segments (most reliable for fitness)
-  const primary =
-    contexts.find(
-      (c) =>
-        c.distBucket === "1km" &&
-        (c.loadCategory === "fresh" || c.loadCategory === "light") &&
-        c.points.length >= 3
-    ) ??
-    contexts.find((c) => c.points.length >= 3) ??
-    contexts[0] ??
-    null;
+  // --- Composite score from ALL contexts ---
+  // Weight each context by number of data points (more data = more reliable).
+  // Score each context 0-100 within its own EF range, then weighted average.
 
-  // Score from primary context
-  let currentScore = 0;
-  let peakScore = 0;
-  let peakDate = "-";
-  let trend: "improving" | "stable" | "declining" = "stable";
+  const contextWeights: ContextWeight[] = [];
+  let totalWeight = 0;
 
-  if (primary && primary.points.length >= 2) {
-    const efs = primary.points.map((p) => p.ef);
+  for (const ctx of contexts) {
+    if (ctx.points.length < 2) continue;
+
+    const efs = ctx.points.map((p) => p.ef);
     const minEF = Math.min(...efs);
     const maxEF = Math.max(...efs);
     const range = maxEF - minEF || 1;
 
-    currentScore = Math.round(((primary.currentEF - minEF) / range) * 100);
-    peakScore = Math.round(((primary.peakEF - minEF) / range) * 100);
-    currentScore = Math.max(0, Math.min(100, currentScore));
-    peakScore = Math.max(0, Math.min(100, peakScore));
-
-    const peakPoint = primary.points.reduce((best, p) =>
-      p.ef > best.ef ? p : best
+    const ctxScore = Math.max(
+      0,
+      Math.min(100, Math.round(((ctx.currentEF - minEF) / range) * 100))
     );
-    peakDate = peakPoint.dateStr;
 
-    // Trend
-    if (primary.points.length >= 6) {
-      const recent = primary.points.slice(-3);
-      const prior = primary.points.slice(-6, -3);
-      const recentAvg = recent.reduce((s, p) => s + p.ef, 0) / 3;
-      const priorAvg = prior.reduce((s, p) => s + p.ef, 0) / 3;
-      if (priorAvg > 0) {
-        const change = (recentAvg - priorAvg) / priorAvg;
-        if (change > 0.02) trend = "improving";
-        else if (change < -0.02) trend = "declining";
-      }
+    // Weight by sqrt of data points — diminishing returns for lots of data
+    const weight = Math.sqrt(ctx.points.length);
+    totalWeight += weight;
+
+    contextWeights.push({
+      label: ctx.label,
+      weight,
+      score: ctxScore,
+    });
+  }
+
+  // Normalize weights to sum to 1
+  if (totalWeight > 0) {
+    for (const cw of contextWeights) {
+      cw.weight = cw.weight / totalWeight;
     }
+  }
+
+  const currentScore =
+    contextWeights.length > 0
+      ? Math.round(
+          contextWeights.reduce((s, cw) => s + cw.score * cw.weight, 0)
+        )
+      : 0;
+
+  // Peak: best weighted score across all time points
+  // For simplicity, use the max per-context peak weighted
+  const peakScore =
+    contextWeights.length > 0
+      ? Math.round(
+          contexts
+            .filter((c) => c.points.length >= 2)
+            .reduce((s, ctx, i) => {
+              const efs = ctx.points.map((p) => p.ef);
+              const minEF = Math.min(...efs);
+              const range = (Math.max(...efs) - minEF) || 1;
+              const ctxPeak = Math.round(((ctx.peakEF - minEF) / range) * 100);
+              return s + ctxPeak * (contextWeights[i]?.weight ?? 0);
+            }, 0)
+        )
+      : 0;
+
+  // Peak date from the context with the most data
+  const bestCtx = contexts.reduce(
+    (best, c) => (c.points.length > (best?.points.length ?? 0) ? c : best),
+    contexts[0]
+  );
+  const peakDate = bestCtx
+    ? bestCtx.points.reduce((best, p) => (p.ef > best.ef ? p : best)).dateStr
+    : "-";
+
+  // Trend: weighted average of per-context trends
+  let trendSignal = 0;
+  let trendWeight = 0;
+  for (const ctx of contexts) {
+    if (ctx.points.length < 4) continue;
+    const n = ctx.points.length;
+    const recentN = Math.min(3, Math.floor(n / 2));
+    const recent = ctx.points.slice(-recentN);
+    const prior = ctx.points.slice(-recentN * 2, -recentN);
+    if (prior.length === 0) continue;
+    const recentAvg = recent.reduce((s, p) => s + p.ef, 0) / recent.length;
+    const priorAvg = prior.reduce((s, p) => s + p.ef, 0) / prior.length;
+    if (priorAvg > 0) {
+      const change = (recentAvg - priorAvg) / priorAvg;
+      const w = Math.sqrt(ctx.points.length);
+      trendSignal += change * w;
+      trendWeight += w;
+    }
+  }
+
+  let trend: "improving" | "stable" | "declining" = "stable";
+  if (trendWeight > 0) {
+    const avgChange = trendSignal / trendWeight;
+    if (avgChange > 0.02) trend = "improving";
+    else if (avgChange < -0.02) trend = "declining";
   }
 
   return {
     contexts,
-    currentScore,
-    peakScore,
+    currentScore: Math.max(0, Math.min(100, currentScore)),
+    peakScore: Math.max(0, Math.min(100, peakScore)),
     peakDate,
     trend,
-    primaryContext: primary,
+    contextWeights,
   };
 }
