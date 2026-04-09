@@ -1,0 +1,68 @@
+import { describe, it, expect } from "vitest";
+import { readFileSync, readdirSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { parseFitFile } from "../src/parseFit";
+import { computeContextFitness, type ContextFitness } from "../src/fitness";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FIXTURES = join(__dirname, "fixtures");
+
+function loadAll(): Promise<
+  Awaited<ReturnType<typeof parseFitFile>>[]
+> {
+  const files = readdirSync(FIXTURES).filter((f) => f.endsWith(".fit"));
+  return Promise.all(
+    files.map(async (name) => {
+      const buf = readFileSync(join(FIXTURES, name));
+      const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+      return parseFitFile(ab, name);
+    })
+  );
+}
+
+describe("context-based fitness", () => {
+  it("produces fitness contexts from multiple activities", async () => {
+    const activities = (await loadAll()).filter(
+      (a) => a.summary.sport === "running"
+    );
+    const fitness = computeContextFitness(activities);
+
+    // Should have at least one context with data
+    expect(fitness.contexts.length).toBeGreaterThan(0);
+  });
+
+  it("separates easy 1km segments from interval reps", async () => {
+    const activities = (await loadAll()).filter(
+      (a) => a.summary.sport === "running"
+    );
+    const fitness = computeContextFitness(activities);
+
+    // Should have distinct contexts for different efforts
+    const labels = fitness.contexts.map((c) => c.label);
+    // Should not have a single generic context — should be split by type
+    expect(labels.length).toBeGreaterThan(1);
+  });
+
+  it("each context has a trend with multiple data points", async () => {
+    const activities = (await loadAll()).filter(
+      (a) => a.summary.sport === "running"
+    );
+    const fitness = computeContextFitness(activities);
+
+    // At least one context should have >= 3 data points for a meaningful trend
+    const withTrend = fitness.contexts.filter((c) => c.points.length >= 3);
+    expect(withTrend.length).toBeGreaterThan(0);
+  });
+
+  it("computes an overall fitness score", async () => {
+    const activities = (await loadAll()).filter(
+      (a) => a.summary.sport === "running"
+    );
+    const fitness = computeContextFitness(activities);
+
+    expect(fitness.currentScore).toBeGreaterThanOrEqual(0);
+    expect(fitness.currentScore).toBeLessThanOrEqual(100);
+    expect(fitness.trend).toMatch(/improving|stable|declining/);
+  });
+});

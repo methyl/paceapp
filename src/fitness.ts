@@ -1,5 +1,6 @@
 import type { ParsedActivity, LapSummary, WorkoutType } from "./types";
 import { getZ2Ceiling } from "./detectWorkout";
+import { getDistanceBucket, type DistanceBucket } from "./labeller";
 
 /**
  * Efficiency Factor = (speed m/s) / (heart rate bpm) × 1000
@@ -10,30 +11,16 @@ export function efficiencyFactor(speedMps: number, hr: number): number {
   return (speedMps / hr) * 1000;
 }
 
-// --- Prior load computation (shared with PaceComparison concept) ---
+// --- Prior load computation ---
 
 export type LoadCategory = "fresh" | "light" | "moderate" | "heavy";
 
-/**
- * Prior load thresholds using intensity-weighted work.
- * Work = speed * time * intensity_multiplier, where intensity is
- * based on HR relative to Z2. A hard 1km interval at 157bpm counts
- * much more than a slow 1km jog at 120bpm.
- */
 export const LOAD_THRESHOLDS = {
   light: 800,
   moderate: 3000,
   heavy: 10000,
 };
 
-/**
- * HR intensity multiplier relative to Z2 ceiling.
- *   HR < Z2:       1.0 (baseline)
- *   HR = Z2:       1.0
- *   HR = Z2 + 10%: 1.5
- *   HR = Z2 + 20%: 2.0
- * This means a 1km at 157bpm (Z2=140) gets multiplied by ~1.6x
- */
 function hrIntensity(hr: number | undefined, z2: number): number {
   if (hr == null || hr <= z2) return 1.0;
   return 1.0 + ((hr - z2) / z2) * 5;
@@ -90,16 +77,23 @@ export interface SegmentEF {
   lapIndex: number;
   totalLaps: number;
   ef: number;
-  speed: number; // m/s
-  hr: number; // bpm
-  pace: number; // sec/km
+  speed: number;
+  hr: number;
+  pace: number;
+  distance: number;
+  distBucket: DistanceBucket;
   priorLoad: LoadCategory;
   priorWork: number;
   priorDistance: number;
   priorAvgHR: number;
+  // Running dynamics
+  verticalOscillation?: number;
+  groundContactTime?: number;
+  strideLength?: number;
+  cadence?: number;
+  power?: number;
 }
 
-/** Extract per-segment EF with load context from all activities */
 export function computeSegmentEFs(activities: ParsedActivity[]): SegmentEF[] {
   const segments: SegmentEF[] = [];
 
@@ -117,7 +111,7 @@ export function computeSegmentEFs(activities: ParsedActivity[]): SegmentEF[] {
     for (let i = 0; i < segs.length; i++) {
       const lap = segs[i];
       if (!lap.avgSpeed || lap.avgSpeed <= 0 || !lap.avgHeartRate) continue;
-      if (lap.totalDistance < 200) continue;
+      if (lap.totalDistance < 50) continue;
 
       const prior = computePriorLoad(segs, i);
 
@@ -132,10 +126,17 @@ export function computeSegmentEFs(activities: ParsedActivity[]): SegmentEF[] {
         speed: lap.avgSpeed,
         hr: lap.avgHeartRate,
         pace: Math.round(1000 / lap.avgSpeed),
+        distance: lap.totalDistance,
+        distBucket: getDistanceBucket(lap.totalDistance),
         priorLoad: prior.load,
         priorWork: prior.work,
         priorDistance: +prior.distance.toFixed(1),
         priorAvgHR: Math.round(prior.avgHR),
+        verticalOscillation: lap.avgVerticalOscillation,
+        groundContactTime: lap.avgGroundContactTime,
+        strideLength: lap.avgStrideLength,
+        cadence: lap.avgCadence,
+        power: lap.avgPower,
       });
     }
   }
@@ -143,232 +144,244 @@ export function computeSegmentEFs(activities: ParsedActivity[]): SegmentEF[] {
   return segments.sort((a, b) => a.date.getTime() - b.date.getTime());
 }
 
-// --- Activity-level EF (kept for the table / drift chart) ---
+// --- Context-based fitness ---
 
-export interface ActivityEF {
-  id: string;
+/**
+ * A fitness context groups comparable segments.
+ * E.g., "easy 1km fresh" or "800m reps heavy load".
+ */
+export interface FitnessContext {
+  label: string;
+  /** What defines this context */
+  paceBand: string; // e.g., "5:00-5:30"
+  loadCategory: LoadCategory;
+  distBucket: DistanceBucket;
+  /** One point per workout (averaged if multiple matching segments) */
+  points: ContextPoint[];
+  /** Current rolling EF */
+  currentEF: number;
+  /** Best rolling EF */
+  peakEF: number;
+}
+
+export interface ContextPoint {
   date: Date;
   dateStr: string;
-  workoutType: WorkoutType;
+  activityId: string;
   ef: number;
-  /** Context-normalized: average EF of "fresh" segments only */
-  freshEF: number | null;
-  /** Average EF of "moderate"/"heavy" segments */
-  loadedEF: number | null;
-  avgSpeed: number;
-  avgHR: number;
-  distance: number;
-  lapEFs: { lapIndex: number; ef: number; speed: number; hr: number }[];
-  driftRatio: number;
+  hr: number;
+  speed: number;
+  count: number; // how many segments averaged
+  verticalOscillation?: number;
+  groundContactTime?: number;
+  strideLength?: number;
+  cadence?: number;
+  power?: number;
 }
 
-export function computeActivityEFs(activities: ParsedActivity[]): ActivityEF[] {
-  const allSegments = computeSegmentEFs(activities);
-
-  return activities
-    .filter((a) => a.summary.avgSpeed && a.summary.avgHeartRate)
-    .map((a) => {
-      const avgSpeed = a.summary.avgSpeed!;
-      const avgHR = a.summary.avgHeartRate!;
-      const ef = efficiencyFactor(avgSpeed, avgHR);
-
-      const segs = allSegments.filter((s) => s.activityId === a.id);
-      const freshSegs = segs.filter(
-        (s) => s.priorLoad === "fresh" || s.priorLoad === "light"
-      );
-      const loadedSegs = segs.filter(
-        (s) => s.priorLoad === "moderate" || s.priorLoad === "heavy"
-      );
-
-      const freshEF =
-        freshSegs.length > 0
-          ? freshSegs.reduce((s, l) => s + l.ef, 0) / freshSegs.length
-          : null;
-      const loadedEF =
-        loadedSegs.length > 0
-          ? loadedSegs.reduce((s, l) => s + l.ef, 0) / loadedSegs.length
-          : null;
-
-      const lapEFs = a.segments
-        .filter((l) => l.avgSpeed && l.avgHeartRate)
-        .map((l) => ({
-          lapIndex: l.lapIndex,
-          ef: efficiencyFactor(l.avgSpeed!, l.avgHeartRate!),
-          speed: l.avgSpeed!,
-          hr: l.avgHeartRate!,
-        }));
-
-      let driftRatio = 1;
-      if (lapEFs.length >= 4) {
-        const mid = Math.floor(lapEFs.length / 2);
-        const firstHalf = lapEFs.slice(0, mid);
-        const secondHalf = lapEFs.slice(mid);
-        const avgFirst =
-          firstHalf.reduce((s, l) => s + l.ef, 0) / firstHalf.length;
-        const avgSecond =
-          secondHalf.reduce((s, l) => s + l.ef, 0) / secondHalf.length;
-        driftRatio = avgFirst > 0 ? avgSecond / avgFirst : 1;
-      }
-
-      return {
-        id: a.id,
-        date: a.summary.startTime ? new Date(a.summary.startTime) : new Date(),
-        dateStr: a.summary.startTime
-          ? new Date(a.summary.startTime).toLocaleDateString(undefined, {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })
-          : a.fileName,
-        workoutType: a.workoutType,
-        ef,
-        freshEF,
-        loadedEF,
-        avgSpeed,
-        avgHR,
-        distance: a.summary.totalDistance / 1000,
-        lapEFs,
-        driftRatio,
-      };
-    })
-    .sort((a, b) => a.date.getTime() - b.date.getTime());
-}
-
-// --- Fitness snapshots ---
-
-export interface FitnessSnapshot {
-  date: Date;
-  dateStr: string;
-  /** Rolling fresh-segment EF */
-  freshEF: number;
-  /** Rolling loaded-segment EF */
-  loadedEF: number | null;
-  /** Rolling whole-activity EF (fallback) */
-  rawEF: number;
-  score: number;
-  sampleSize: number;
-}
-
-export interface FitnessSummary {
-  activities: ActivityEF[];
-  segments: SegmentEF[];
-  snapshots: FitnessSnapshot[];
+export interface ContextFitness {
+  contexts: FitnessContext[];
+  /** Overall score from the primary context (easy fresh 1km) */
   currentScore: number;
   peakScore: number;
   peakDate: string;
-  bestFreshEF: number;
-  currentFreshEF: number;
-  bestLoadedEF: number;
-  currentLoadedEF: number;
   trend: "improving" | "stable" | "declining";
+  /** Which context drives the main score */
+  primaryContext: FitnessContext | null;
 }
 
-function rollingAvg(values: (number | null)[], windowSize: number): (number | null)[] {
-  return values.map((_, i) => {
-    const window = values
-      .slice(Math.max(0, i - windowSize + 1), i + 1)
-      .filter((v): v is number => v != null);
-    return window.length > 0 ? window.reduce((s, v) => s + v, 0) / window.length : null;
-  });
+function paceBand(secPerKm: number): string {
+  // Round to 30s bands
+  const rounded = Math.floor(secPerKm / 30) * 30;
+  const fmt = (s: number) =>
+    `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
+  return `${fmt(rounded)}-${fmt(rounded + 30)}`;
 }
+
+function paceStr(secPerKm: number): string {
+  return `${Math.floor(secPerKm / 60)}:${(Math.round(secPerKm) % 60).toString().padStart(2, "0")}`;
+}
+
+const LOAD_LABELS: Record<LoadCategory, string> = {
+  fresh: "fresh",
+  light: "light",
+  moderate: "moderate",
+  heavy: "fatigued",
+};
 
 /**
- * Compute fitness using context-normalized EF.
+ * Build fitness contexts from all segments across all activities.
  *
- * Primary signal: rolling average of fresh-segment EF across steady runs.
- * Secondary signal: loaded-segment EF for endurance fitness.
+ * Groups segments by (pace band, load category, distance bucket),
+ * then for each context builds a time series of per-workout average EF.
  */
-export function computeFitness(
+export function computeContextFitness(
   activities: ParsedActivity[],
-  windowSize = 5
-): FitnessSummary {
-  const allEFs = computeActivityEFs(activities);
-  const allSegments = computeSegmentEFs(activities);
+  windowSize = 4
+): ContextFitness {
+  const allSegs = computeSegmentEFs(activities);
 
-  // Prefer steady runs for the score, but fall back to all
-  const steadyTypes: WorkoutType[] = ["easy", "steady", "tempo"];
-  const steadyEFs = allEFs.filter((a) => steadyTypes.includes(a.workoutType));
-  const source = steadyEFs.length >= 3 ? steadyEFs : allEFs;
+  // Group segments into contexts
+  const contextMap = new Map<
+    string,
+    {
+      paceBand: string;
+      load: LoadCategory;
+      distBucket: DistanceBucket;
+      segments: SegmentEF[];
+    }
+  >();
 
-  if (source.length === 0) {
-    return {
-      activities: allEFs,
-      segments: allSegments,
-      snapshots: [],
-      currentScore: 0,
-      peakScore: 0,
-      peakDate: "-",
-      bestFreshEF: 0,
-      currentFreshEF: 0,
-      bestLoadedEF: 0,
-      currentLoadedEF: 0,
-      trend: "stable",
-    };
+  for (const seg of allSegs) {
+    const band = paceBand(seg.pace);
+    const key = `${band}|${seg.priorLoad}|${seg.distBucket ?? "other"}`;
+
+    if (!contextMap.has(key)) {
+      contextMap.set(key, {
+        paceBand: band,
+        load: seg.priorLoad,
+        distBucket: seg.distBucket,
+        segments: [],
+      });
+    }
+    contextMap.get(key)!.segments.push(seg);
   }
 
-  // Build rolling averages from fresh-segment EF per activity
-  const freshEFs = source.map((a) => a.freshEF);
-  const loadedEFs = source.map((a) => a.loadedEF);
-  const rawEFs = source.map((a) => a.ef);
+  // Build contexts — only keep those with >= 2 workouts
+  const contexts: FitnessContext[] = [];
 
-  const rollingFresh = rollingAvg(freshEFs, windowSize);
-  const rollingLoaded = rollingAvg(loadedEFs, windowSize);
-  const rollingRaw = rollingAvg(rawEFs, windowSize);
+  for (const [, ctx] of contextMap) {
+    // Group segments by activity, average per workout
+    const byActivity = new Map<string, SegmentEF[]>();
+    for (const seg of ctx.segments) {
+      if (!byActivity.has(seg.activityId)) byActivity.set(seg.activityId, []);
+      byActivity.get(seg.activityId)!.push(seg);
+    }
 
-  // Use fresh EF for scoring; fall back to raw if no fresh data
-  const scoreBasis = rollingFresh.map((v, i) => v ?? rollingRaw[i] ?? 0);
-  const validScores = scoreBasis.filter((v) => v > 0);
-  const minEF = validScores.length > 0 ? Math.min(...validScores) : 0;
-  const maxEF = validScores.length > 0 ? Math.max(...validScores) : 0;
-  const efRange = maxEF - minEF || 1;
+    if (byActivity.size < 2) continue;
 
-  const snapshots: FitnessSnapshot[] = source.map((a, i) => ({
-    date: a.date,
-    dateStr: a.dateStr,
-    freshEF: +(rollingFresh[i] ?? 0).toFixed(2),
-    loadedEF: rollingLoaded[i] != null ? +rollingLoaded[i].toFixed(2) : null,
-    rawEF: +(rollingRaw[i] ?? 0).toFixed(2),
-    score: Math.max(
-      0,
-      Math.min(100, Math.round(((scoreBasis[i] - minEF) / efRange) * 100))
-    ),
-    sampleSize: Math.min(i + 1, windowSize),
-  }));
+    const points: ContextPoint[] = [];
+    for (const [actId, segs] of byActivity) {
+      const avgEF = segs.reduce((s, v) => s + v.ef, 0) / segs.length;
+      const avgHR = segs.reduce((s, v) => s + v.hr, 0) / segs.length;
+      const avgSpeed = segs.reduce((s, v) => s + v.speed, 0) / segs.length;
+      const avgOf = (vals: (number | undefined)[]) => {
+        const v = vals.filter((x): x is number => x != null);
+        return v.length > 0 ? v.reduce((s, x) => s + x, 0) / v.length : undefined;
+      };
 
-  const current = snapshots[snapshots.length - 1];
-  const peak = snapshots.reduce((best, s) => (s.score > best.score ? s : best));
+      points.push({
+        date: segs[0].date,
+        dateStr: segs[0].dateStr,
+        activityId: actId,
+        ef: +avgEF.toFixed(2),
+        hr: Math.round(avgHR),
+        speed: avgSpeed,
+        count: segs.length,
+        verticalOscillation: avgOf(segs.map((s) => s.verticalOscillation)),
+        groundContactTime: avgOf(segs.map((s) => s.groundContactTime)),
+        strideLength: avgOf(segs.map((s) => s.strideLength)),
+        cadence: avgOf(segs.map((s) => s.cadence)),
+        power: avgOf(segs.map((s) => s.power)),
+      });
+    }
 
-  // Trend from fresh EF
+    points.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    // Compute rolling EF
+    const rollingEFs = points.map((_, i) => {
+      const window = points.slice(Math.max(0, i - windowSize + 1), i + 1);
+      return window.reduce((s, p) => s + p.ef, 0) / window.length;
+    });
+
+    const currentEF = rollingEFs[rollingEFs.length - 1] ?? 0;
+    const peakEF = Math.max(...rollingEFs);
+
+    // Label
+    const distStr = ctx.distBucket ?? "mixed";
+    const avgPace = paceStr(
+      ctx.segments.reduce((s, seg) => s + seg.pace, 0) / ctx.segments.length
+    );
+    const label = `${distStr} @${avgPace} ${LOAD_LABELS[ctx.load]}`;
+
+    contexts.push({
+      label,
+      paceBand: ctx.paceBand,
+      loadCategory: ctx.load,
+      distBucket: ctx.distBucket,
+      points,
+      currentEF,
+      peakEF,
+    });
+  }
+
+  // Sort: most data points first, then by load (fresh first)
+  const loadOrder: Record<LoadCategory, number> = {
+    fresh: 0,
+    light: 1,
+    moderate: 2,
+    heavy: 3,
+  };
+  contexts.sort((a, b) => {
+    if (b.points.length !== a.points.length)
+      return b.points.length - a.points.length;
+    return loadOrder[a.loadCategory] - loadOrder[b.loadCategory];
+  });
+
+  // Primary context: 1km fresh/light segments (most reliable for fitness)
+  const primary =
+    contexts.find(
+      (c) =>
+        c.distBucket === "1km" &&
+        (c.loadCategory === "fresh" || c.loadCategory === "light") &&
+        c.points.length >= 3
+    ) ??
+    contexts.find((c) => c.points.length >= 3) ??
+    contexts[0] ??
+    null;
+
+  // Score from primary context
+  let currentScore = 0;
+  let peakScore = 0;
+  let peakDate = "-";
   let trend: "improving" | "stable" | "declining" = "stable";
-  if (snapshots.length >= 6) {
-    const recent = snapshots.slice(-3);
-    const prior = snapshots.slice(-6, -3);
-    const recentAvg = recent.reduce((s, v) => s + v.freshEF, 0) / 3;
-    const priorAvg = prior.reduce((s, v) => s + v.freshEF, 0) / 3;
-    if (priorAvg > 0) {
-      const change = (recentAvg - priorAvg) / priorAvg;
-      if (change > 0.02) trend = "improving";
-      else if (change < -0.02) trend = "declining";
+
+  if (primary && primary.points.length >= 2) {
+    const efs = primary.points.map((p) => p.ef);
+    const minEF = Math.min(...efs);
+    const maxEF = Math.max(...efs);
+    const range = maxEF - minEF || 1;
+
+    currentScore = Math.round(((primary.currentEF - minEF) / range) * 100);
+    peakScore = Math.round(((primary.peakEF - minEF) / range) * 100);
+    currentScore = Math.max(0, Math.min(100, currentScore));
+    peakScore = Math.max(0, Math.min(100, peakScore));
+
+    const peakPoint = primary.points.reduce((best, p) =>
+      p.ef > best.ef ? p : best
+    );
+    peakDate = peakPoint.dateStr;
+
+    // Trend
+    if (primary.points.length >= 6) {
+      const recent = primary.points.slice(-3);
+      const prior = primary.points.slice(-6, -3);
+      const recentAvg = recent.reduce((s, p) => s + p.ef, 0) / 3;
+      const priorAvg = prior.reduce((s, p) => s + p.ef, 0) / 3;
+      if (priorAvg > 0) {
+        const change = (recentAvg - priorAvg) / priorAvg;
+        if (change > 0.02) trend = "improving";
+        else if (change < -0.02) trend = "declining";
+      }
     }
   }
 
-  // Best loaded EF
-  const loadedValues = allEFs.map((a) => a.loadedEF).filter((v): v is number => v != null);
-  const currentLoadedSnap = rollingLoaded.filter((v): v is number => v != null);
-
   return {
-    activities: allEFs,
-    segments: allSegments,
-    snapshots,
-    currentScore: current?.score ?? 0,
-    peakScore: peak?.score ?? 0,
-    peakDate: peak?.dateStr ?? "-",
-    bestFreshEF: maxEF,
-    currentFreshEF: current?.freshEF ?? 0,
-    bestLoadedEF: loadedValues.length > 0 ? Math.max(...loadedValues) : 0,
-    currentLoadedEF: currentLoadedSnap.length > 0
-      ? currentLoadedSnap[currentLoadedSnap.length - 1]
-      : 0,
+    contexts,
+    currentScore,
+    peakScore,
+    peakDate,
     trend,
+    primaryContext: primary,
   };
 }
