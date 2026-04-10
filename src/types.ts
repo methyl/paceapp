@@ -50,6 +50,8 @@ export interface RecordPoint {
   elapsed: number;
   distance: number;
   altitude?: number;
+  lat?: number;
+  lng?: number;
   heartRate?: number;
   cadence?: number;
   speed?: number;

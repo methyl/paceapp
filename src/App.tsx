@@ -9,6 +9,8 @@ import PaceComparison from "./components/PaceComparison";
 import FitnessDashboard from "./components/FitnessDashboard";
 import SegmentHistory from "./components/SegmentHistory";
 import HillSprintsView from "./components/HillSprints";
+import RouteMap from "./components/RouteMap";
+import LibraryMap from "./components/LibraryMap";
 import { parseFitFile, reprocessActivity } from "./parseFit";
 import { loadActivities, saveActivities, clearActivities } from "./storage";
 import { getZ2Ceiling, setZ2Ceiling } from "./detectWorkout";
@@ -277,6 +279,7 @@ function App() {
                 <FileUpload onFilesLoaded={handleFiles} multiple />
               </div>
             </div>
+            <LibraryMap activities={runningActivities} onSelect={handleSelectActivity} />
             <ActivityList
               activities={runningActivities}
               onSelect={handleSelectActivity}
@@ -309,6 +312,7 @@ function App() {
               <span className="text-sm font-medium text-gray-700">{selected.workoutLabel}</span>
             </div>
             <Summary summary={selected.summary} />
+            <RouteMap records={selected.records} />
             {selected.segmentsDetected && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-blue-800 text-sm">
                 Auto-laps detected — showing {selected.segments.length} effort segments based on pace changes.
