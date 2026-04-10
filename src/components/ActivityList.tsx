@@ -1,6 +1,7 @@
 import type { ParsedActivity, WorkoutType } from "../types";
 import { WORKOUT_LABELS, WORKOUT_COLORS } from "../types";
 import { formatTime } from "../parseFit";
+import MiniRouteMap from "./MiniRouteMap";
 
 interface ActivityListProps {
   activities: ParsedActivity[];
@@ -80,62 +81,45 @@ export default function ActivityList({
           ))}
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-gray-200">
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr className="bg-gray-50 text-gray-600 text-left">
-              <th className="px-3 py-2.5 font-semibold">Date</th>
-              <th className="px-3 py-2.5 font-semibold">Type</th>
-              <th className="px-3 py-2.5 font-semibold">Workout</th>
-              <th className="px-3 py-2.5 font-semibold">Distance</th>
-              <th className="px-3 py-2.5 font-semibold">Duration</th>
-              <th className="px-3 py-2.5 font-semibold">Pace</th>
-              <th className="px-3 py-2.5 font-semibold">Avg HR</th>
-              <th className="px-3 py-2.5 font-semibold">Laps</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((a) => (
-              <tr
-                key={a.id}
-                onClick={() => onSelect(a)}
-                className="border-t border-gray-100 hover:bg-blue-50/50 cursor-pointer transition-colors"
-              >
-                <td className="px-3 py-2.5 font-medium text-gray-900">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {sorted.map((a) => (
+          <div
+            key={a.id}
+            onClick={() => onSelect(a)}
+            className="bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
+          >
+            <MiniRouteMap
+              records={a.records}
+              color={WORKOUT_COLORS[a.workoutType]}
+              height={130}
+            />
+            <div className="p-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm font-medium text-gray-900">
                   {a.summary.startTime
                     ? new Date(a.summary.startTime).toLocaleDateString(undefined, {
+                        weekday: "short",
                         month: "short",
                         day: "numeric",
-                        year: "numeric",
                       })
                     : a.fileName}
-                </td>
-                <td className="px-3 py-2.5">
-                  <WorkoutBadge type={a.workoutType} />
-                </td>
-                <td className="px-3 py-2.5 text-xs text-gray-700 max-w-[220px] truncate" title={a.workoutLabel}>
-                  {a.workoutLabel}
-                </td>
-                <td className="px-3 py-2.5">
-                  {(a.summary.totalDistance / 1000).toFixed(2)} km
-                </td>
-                <td className="px-3 py-2.5">
-                  {formatTime(a.summary.totalElapsedTime)}
-                </td>
-                <td className="px-3 py-2.5 font-medium">{a.summary.avgPace}</td>
-                <td className="px-3 py-2.5">
-                  {a.summary.avgHeartRate != null
-                    ? `${Math.round(a.summary.avgHeartRate)} bpm`
-                    : "-"}
-                </td>
-                <td className="px-3 py-2.5">
-                  {a.segments.length}
-                  {a.segmentsDetected && <span className="text-gray-400 text-xs ml-1">detected</span>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </span>
+                <WorkoutBadge type={a.workoutType} />
+              </div>
+              <div className="text-xs text-gray-600 truncate mb-2" title={a.workoutLabel}>
+                {a.workoutLabel}
+              </div>
+              <div className="flex gap-3 text-xs text-gray-500">
+                <span>{(a.summary.totalDistance / 1000).toFixed(1)} km</span>
+                <span>{formatTime(a.summary.totalElapsedTime)}</span>
+                <span>{a.summary.avgPace}/km</span>
+                {a.summary.avgHeartRate != null && (
+                  <span>{Math.round(a.summary.avgHeartRate)} bpm</span>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
