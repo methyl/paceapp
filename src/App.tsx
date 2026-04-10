@@ -27,10 +27,34 @@ function App() {
   const [filterType, setFilterType] = useState<WorkoutType | "all">("all");
   const [showOriginalLaps, setShowOriginalLaps] = useState(false);
   const [z2, setZ2] = useState(getZ2Ceiling);
+  const [timeRange, setTimeRange] = useState<string>("all");
 
   const isRunning = (a: ParsedActivity) =>
     !a.summary.sport || a.summary.sport === "running" || a.summary.sport === "trail_running";
   const runningActivities = useMemo(() => activities.filter(isRunning), [activities]);
+
+  // Time-filtered activities for analysis views (not library)
+  const timeFilteredRunning = useMemo(() => {
+    if (timeRange === "all") return runningActivities;
+    const now = Date.now();
+    const days: Record<string, number> = { "30d": 30, "3m": 90, "6m": 180, "1y": 365 };
+    const cutoff = now - (days[timeRange] ?? 365) * 24 * 60 * 60 * 1000;
+    return runningActivities.filter((a) => {
+      const t = a.summary.startTime ? new Date(a.summary.startTime).getTime() : 0;
+      return t >= cutoff;
+    });
+  }, [runningActivities, timeRange]);
+
+  const timeFilteredAll = useMemo(() => {
+    if (timeRange === "all") return activities;
+    const now = Date.now();
+    const days: Record<string, number> = { "30d": 30, "3m": 90, "6m": 180, "1y": 365 };
+    const cutoff = now - (days[timeRange] ?? 365) * 24 * 60 * 60 * 1000;
+    return activities.filter((a) => {
+      const t = a.summary.startTime ? new Date(a.summary.startTime).getTime() : 0;
+      return t >= cutoff;
+    });
+  }, [activities, timeRange]);
 
   // Load from IndexedDB on mount, re-run segmentation with latest algorithm
   useEffect(() => {
@@ -165,6 +189,21 @@ function App() {
                 Fitness
               </button>
             </div>
+            <div className="flex gap-0.5 bg-gray-100 rounded-md p-0.5 ml-2">
+              {["30d", "3m", "6m", "1y", "all"].map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setTimeRange(r)}
+                  className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                    timeRange === r
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  {r === "all" ? "All" : r.toUpperCase()}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500 ml-2">
               <label htmlFor="z2">Z2:</label>
               <input
@@ -287,25 +326,25 @@ function App() {
               records={selected.records}
             />
             <HillSprintsView activity={selected} />
-            {runningActivities.length >= 2 && (
-              <SegmentHistory current={selected} allActivities={runningActivities} />
+            {timeFilteredRunning.length >= 2 && (
+              <SegmentHistory current={selected} allActivities={timeFilteredRunning} />
             )}
           </>
         )}
 
         {/* Compare view */}
         {!loading && view === "compare" && activities.length > 0 && (
-          <HRComparison activities={runningActivities} />
+          <HRComparison activities={timeFilteredRunning} />
         )}
 
         {/* Pace comparison view */}
         {!loading && view === "pace" && activities.length > 0 && (
-          <PaceComparison activities={runningActivities} />
+          <PaceComparison activities={timeFilteredRunning} />
         )}
 
         {/* Fitness dashboard */}
         {!loading && view === "fitness" && activities.length > 0 && (
-          <FitnessDashboard activities={activities} />
+          <FitnessDashboard activities={timeFilteredAll} />
         )}
       </main>
     </div>
