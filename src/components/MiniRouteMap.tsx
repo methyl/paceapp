@@ -17,10 +17,18 @@ export default function MiniRouteMap({
   const mapRef = useRef<HTMLDivElement>(null);
   const leafletMap = useRef<L.Map | null>(null);
 
-  const points = records
-    .filter((r) => r.lat != null && r.lng != null)
-    .filter((_, i, arr) => i % Math.max(1, Math.floor(arr.length / 80)) === 0)
-    .map((r) => [r.lat!, r.lng!] as [number, number]);
+  const allPoints = records.filter((r) => r.lat != null && r.lng != null);
+  // Use distance-based simplification: skip points that are very close to the previous kept point
+  const points: [number, number][] = [];
+  const minGap = allPoints.length > 500 ? 0.00005 : 0; // ~5m at equator
+  let lastLat = -999, lastLng = -999;
+  for (const r of allPoints) {
+    if (Math.abs(r.lat! - lastLat) > minGap || Math.abs(r.lng! - lastLng) > minGap) {
+      points.push([r.lat!, r.lng!]);
+      lastLat = r.lat!;
+      lastLng = r.lng!;
+    }
+  }
 
   useEffect(() => {
     if (!mapRef.current || points.length < 2) return;
@@ -59,7 +67,7 @@ export default function MiniRouteMap({
     map.invalidateSize();
     setTimeout(() => {
       map.invalidateSize();
-      map.fitBounds(polyline.getBounds(), { padding: [8, 8] });
+      map.fitBounds(polyline.getBounds(), { padding: [8, 8], maxZoom: 16 });
     }, 50);
   }, [points, color]);
 
