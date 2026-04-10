@@ -24,7 +24,7 @@ describe("workout label generation", () => {
   });
 
   it("labels race with pace: 2025-06-01 (5km race)", async () => {
-    const a = await parseFitFile(loadFixture("2025-06-01"), "test");
+    const a = await parseFitFile(loadFixture("2025-06-01-182712"), "test");
     expect(a.workoutLabel).toContain("race");
     expect(a.workoutLabel).toContain("@");
   });

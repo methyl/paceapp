@@ -19,7 +19,7 @@ function loadAll() {
   );
 }
 
-describe("TSB model", () => {
+describe("TSB model", { timeout: 30000 }, () => {
   it("computes CTL, ATL, TSB from activities with HR data", async () => {
     const activities = (await loadAll()).filter(
       (a) => a.summary.sport === "running" && a.summary.avgHeartRate

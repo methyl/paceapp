@@ -74,7 +74,7 @@ describe("parseFitFile", () => {
 
   it("filters non-running activities", async () => {
     // Soccer and cycling should be filtered by the app (sport check in App.tsx)
-    const soccer = await parseFitFile(loadFixture("2025-08-28"), "test");
+    const soccer = await parseFitFile(loadFixture("2025-08-28-175356"), "test");
     expect(soccer.summary.sport).toBe("soccer");
     const cycling = await parseFitFile(loadFixture("2025-12-27"), "test");
     expect(cycling.summary.sport).toBe("cycling");

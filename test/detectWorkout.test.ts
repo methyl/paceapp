@@ -45,12 +45,12 @@ describe("workout type detection", () => {
   });
 
   it("detects race: 2025-06-01 (5km, 4:10/km, HR 165)", async () => {
-    const a = await parseFitFile(loadFixture("2025-06-01"), "test");
+    const a = await parseFitFile(loadFixture("2025-06-01-182712"), "test");
     expect(a.workoutType).toBe("race");
   });
 
   it("detects race: 2025-10-12 (half marathon, HR 163)", async () => {
-    const a = await parseFitFile(loadFixture("2025-10-12"), "test");
+    const a = await parseFitFile(loadFixture("2025-10-12-100103"), "test");
     expect(a.workoutType).toBe("race");
   });
 

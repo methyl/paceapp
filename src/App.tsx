@@ -8,6 +8,7 @@ import HRComparison from "./components/HRComparison";
 import PaceComparison from "./components/PaceComparison";
 import FitnessDashboard from "./components/FitnessDashboard";
 import SegmentHistory from "./components/SegmentHistory";
+import HillSprintsView from "./components/HillSprints";
 import { parseFitFile, reprocessActivity } from "./parseFit";
 import { loadActivities, saveActivities, clearActivities } from "./storage";
 import { getZ2Ceiling, setZ2Ceiling } from "./detectWorkout";
@@ -285,6 +286,7 @@ function App() {
               laps={selected.segmentsDetected && !showOriginalLaps ? selected.segments : selected.laps}
               records={selected.records}
             />
+            <HillSprintsView activity={selected} />
             {runningActivities.length >= 2 && (
               <SegmentHistory current={selected} allActivities={runningActivities} />
             )}

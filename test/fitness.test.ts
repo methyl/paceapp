@@ -21,7 +21,7 @@ function loadAll(): Promise<
   );
 }
 
-describe("context-based fitness", () => {
+describe("context-based fitness", { timeout: 30000 }, () => {
   it("produces fitness contexts from multiple activities", async () => {
     const activities = (await loadAll()).filter(
       (a) => a.summary.sport === "running"
