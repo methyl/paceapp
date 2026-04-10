@@ -149,7 +149,7 @@ export async function parseFitFile(
   // 3km warmup chunked into 3×1km makes the overall CV look low).
   // Use chunked segments for labelling since they provide better detail.
   const workoutType = detectWorkoutType(summary, laps);
-  const workoutLabel = generateWorkoutLabel(effortSegments, summary.totalDistance, workoutType);
+  const workoutLabel = generateWorkoutLabel(effortSegments, summary.totalDistance, workoutType, records);
 
   return {
     id: `${fileName}-${++idCounter}`,
@@ -169,7 +169,7 @@ export function reprocessActivity(a: ParsedActivity): ParsedActivity {
   const effortSegments = getEffortSegments(a.laps, a.records);
   const segmentsDetected = effortSegments.length > 0 && effortSegments[0].detected;
   const workoutType = detectWorkoutType(a.summary, a.laps);
-  const workoutLabel = generateWorkoutLabel(effortSegments, a.summary.totalDistance, workoutType);
+  const workoutLabel = generateWorkoutLabel(effortSegments, a.summary.totalDistance, workoutType, a.records);
 
   return {
     ...a,

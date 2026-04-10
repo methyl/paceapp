@@ -75,6 +75,13 @@ describe("workout label generation", () => {
     expect(parts.length).toBeLessThanOrEqual(3);
   });
 
+  it("labels hill sprint workout with 'hills': 2025-09-09", async () => {
+    const a = await parseFitFile(loadFixture("2025-09-09"), "test");
+    // Should say "hills" not "strides" since the reps are uphill
+    expect(a.workoutLabel).toContain("hills");
+    expect(a.workoutLabel).not.toContain("strides");
+  });
+
   it("labels easy run simply: 2025-09-19", async () => {
     const a = await parseFitFile(loadFixture("2025-09-19"), "test");
     expect(a.workoutLabel).toContain("easy");

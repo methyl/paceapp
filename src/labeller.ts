@@ -1,4 +1,4 @@
-import type { LapSummary } from "./types";
+import type { LapSummary, RecordPoint } from "./types";
 
 /**
  * Standard interval distance buckets.
@@ -61,7 +61,8 @@ function distLabel(meters: number): string {
 export function generateWorkoutLabel(
   segments: LapSummary[],
   totalDistance: number,
-  workoutType: string
+  workoutType: string,
+  records: RecordPoint[] = []
 ): string {
   if (segments.length === 0) {
     return `${distLabel(totalDistance)} ${workoutType}`;
@@ -80,7 +81,7 @@ export function generateWorkoutLabel(
   }
 
   // Try to find interval/stride structure (works for all types including easy)
-  const structured = labelStructuredWorkout(segments, totalDistance, workoutType);
+  const structured = labelStructuredWorkout(segments, totalDistance, workoutType, records);
   if (structured) return structured;
 
   // Fallback: simple label
@@ -91,7 +92,8 @@ export function generateWorkoutLabel(
 function labelStructuredWorkout(
   segments: LapSummary[],
   _totalDistance: number,
-  workoutType: string
+  workoutType: string,
+  records: RecordPoint[] = []
 ): string | null {
   const withSpeed = segments.filter(
     (s) => s.avgSpeed && s.avgSpeed > 0 && s.totalDistance > 50
@@ -138,6 +140,18 @@ function labelStructuredWorkout(
     repDistStr = repBucket ?? distLabel(avgRepDist);
   }
 
+  // Check if reps are uphill by looking at altitude gain during each rep
+  const isHills = areRepsUphill(fastSegs, records);
+
+  // Override label for hills
+  if (isHills) {
+    if (repBucket === "strides" || (durationCV < 0.20 && avgRepDuration < 300)) {
+      repDistStr = durationLabel(avgRepDuration) + " hills";
+    } else {
+      repDistStr = (repBucket ?? distLabel(avgRepDist)) + " hills";
+    }
+  }
+
   // Average pace of the fast reps
   const avgRepSpeed = fastSegs.reduce((s, r) => s + r.avgSpeed!, 0) / fastSegs.length;
   const avgRepPace = paceStr(avgRepSpeed);
@@ -159,4 +173,37 @@ function labelStructuredWorkout(
   if (cooldownDist > 200) parts.push(`${distLabel(cooldownDist)} easy`);
 
   return parts.join(" + ");
+}
+
+/**
+ * Check if fast reps are uphill by looking at altitude gain during each rep.
+ * Returns true if most reps gain significant elevation (>2m).
+ */
+function areRepsUphill(fastSegs: LapSummary[], records: RecordPoint[]): boolean {
+  if (records.length < 10) return false;
+
+  let uphillCount = 0;
+
+  for (const seg of fastSegs) {
+    // Find records during this segment's time window
+    const segStart = new Date(seg.startTime).getTime();
+    const segEnd = segStart + seg.totalElapsedTime * 1000;
+
+    const segRecords = records.filter((r) => {
+      const t = new Date(r.timestamp).getTime();
+      return t >= segStart && t <= segEnd && r.altitude != null;
+    });
+
+    if (segRecords.length < 3) continue;
+
+    const startAlt = segRecords[0].altitude!;
+    const endAlt = segRecords[segRecords.length - 1].altitude!;
+    const gain = endAlt - startAlt;
+
+    // >2m elevation gain = uphill (accounting for GPS noise)
+    if (gain > 2) uphillCount++;
+  }
+
+  // Most reps (>60%) should be uphill
+  return fastSegs.length >= 2 && uphillCount / fastSegs.length > 0.6;
 }
