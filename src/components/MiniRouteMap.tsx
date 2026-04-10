@@ -54,7 +54,13 @@ export default function MiniRouteMap({
       opacity: 0.8,
     }).addTo(map);
 
-    map.fitBounds(polyline.getBounds(), { padding: [8, 8] });
+    // invalidateSize + setTimeout ensures Leaflet knows the container size
+    // before fitting bounds — prevents garbled rendering in card layouts
+    map.invalidateSize();
+    setTimeout(() => {
+      map.invalidateSize();
+      map.fitBounds(polyline.getBounds(), { padding: [8, 8] });
+    }, 50);
   }, [points, color]);
 
   useEffect(() => {
