@@ -31,7 +31,10 @@ function App() {
 
   const isRunning = (a: ParsedActivity) =>
     !a.summary.sport || a.summary.sport === "running" || a.summary.sport === "trail_running";
-  const runningActivities = useMemo(() => activities.filter(isRunning), [activities]);
+  const runningActivities = useMemo(
+    () => activities.filter((a) => isRunning(a) && a.summary.totalDistance >= 500),
+    [activities]
+  );
 
   // Time-filtered activities for analysis views (not library)
   const timeFilteredRunning = useMemo(() => {
