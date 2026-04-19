@@ -146,8 +146,10 @@ export function synthesizeRecords(params: {
   existingRecords: RecordPoint[];
   waypoints: [number, number][];
   totalFinishTimeSeconds: number;
+  /** Optional road/trail-snapped polyline — used instead of straight-line waypoints. */
+  path?: [number, number][];
 }): RecordPoint[] {
-  const { existingRecords, waypoints, totalFinishTimeSeconds } = params;
+  const { existingRecords, waypoints, totalFinishTimeSeconds, path } = params;
 
   if (existingRecords.length === 0 || waypoints.length < 2) return [];
 
@@ -157,18 +159,21 @@ export function synthesizeRecords(params: {
   const extensionDuration = totalFinishTimeSeconds - last.elapsed;
   if (extensionDuration <= 0) return [];
 
-  // Compute extension distance from waypoints
-  let totalWaypointDist = 0;
-  for (let i = 1; i < waypoints.length; i++) {
-    totalWaypointDist += haversineDistance(
-      waypoints[i - 1][0], waypoints[i - 1][1],
-      waypoints[i][0], waypoints[i][1]
+  // Use the snapped road/trail path when available so synthetic GPS follows
+  // actual routes rather than cutting across buildings.
+  const routeLine = path && path.length >= 2 ? path : waypoints;
+
+  let totalRouteDist = 0;
+  for (let i = 1; i < routeLine.length; i++) {
+    totalRouteDist += haversineDistance(
+      routeLine[i - 1][0], routeLine[i - 1][1],
+      routeLine[i][0], routeLine[i][1]
     );
   }
 
-  const targetSpeed = totalWaypointDist / extensionDuration;
+  const targetSpeed = totalRouteDist / extensionDuration;
   const spacing = targetSpeed * trend.recordInterval;
-  const gpsPoints = interpolateAlongPolyline(waypoints, Math.max(spacing, 0.5));
+  const gpsPoints = interpolateAlongPolyline(routeLine, Math.max(spacing, 0.5));
 
   const numRecords = Math.min(
     gpsPoints.length,

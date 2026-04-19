@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import type { ParsedActivity } from "../types";
 import { haversineDistance, synthesizeRecords } from "../synthesizeExtension";
 import { speedToPace, formatTime } from "../parseFit";
+import type { SnappedRoute } from "../routing";
 
 interface RunExtensionProps {
   activity: ParsedActivity;
@@ -11,6 +12,9 @@ interface RunExtensionProps {
   onWaypointsChange: (wp: [number, number][]) => void;
   _editMode?: boolean;
   onEditModeChange: (mode: boolean) => void;
+  snappedRoute?: SnappedRoute | null;
+  routeLoading?: boolean;
+  routeError?: string | null;
 }
 
 function parseTimeInput(input: string): number | null {
@@ -21,10 +25,32 @@ function parseTimeInput(input: string): number | null {
   return null;
 }
 
+function getActivityStartMs(activity: ParsedActivity): number | null {
+  const iso = activity.summary.startTime ?? activity.records[0]?.timestamp;
+  if (!iso) return null;
+  const ms = new Date(iso).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function formatClockTime(ms: number, startMs: number): string {
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  // If the finish lands on a different calendar day from the start, show the date too.
+  const sameDay = new Date(startMs).toDateString() === d.toDateString();
+  if (sameDay) return time;
+  const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `${time} (${date})`;
+}
+
 export default function RunExtension({
   activity, onExtend, onUndo,
   waypoints, onWaypointsChange,
   onEditModeChange,
+  snappedRoute, routeLoading, routeError,
 }: RunExtensionProps) {
   const [mode, setModeInternal] = useState<"idle" | "drawing" | "preview">("idle");
 
@@ -39,7 +65,7 @@ export default function RunExtension({
   const lastRecord = activity.records[activity.records.length - 1];
   const currentElapsed = lastRecord?.elapsed ?? 0;
 
-  const extensionDist = useMemo(() => {
+  const straightLineDist = useMemo(() => {
     if (waypoints.length < 2) return 0;
     let d = 0;
     for (let i = 1; i < waypoints.length; i++) {
@@ -51,11 +77,20 @@ export default function RunExtension({
     return d;
   }, [waypoints]);
 
+  // Prefer road/trail-snapped distance when routing succeeded
+  const extensionDist = snappedRoute?.distance ?? straightLineDist;
+
   const finishTime = parseTimeInput(timeInput);
   const extensionTime = finishTime != null ? finishTime - currentElapsed : null;
   const impliedPace = extensionTime && extensionDist > 0
     ? speedToPace(extensionDist / extensionTime)
     : null;
+
+  const startMs = getActivityStartMs(activity);
+  const finishClock =
+    finishTime != null && startMs != null
+      ? formatClockTime(startMs + finishTime * 1000, startMs)
+      : null;
 
   const handlePreview = () => {
     setError("");
@@ -81,6 +116,7 @@ export default function RunExtension({
       existingRecords: activity.records,
       waypoints,
       totalFinishTimeSeconds: finishTime,
+      path: snappedRoute?.coordinates,
     });
 
     if (synthetic.length === 0) {
@@ -184,11 +220,25 @@ export default function RunExtension({
               <div className="text-[10px] text-gray-500 mt-0.5">
                 Current: {formatTime(currentElapsed)}
               </div>
+              {finishClock && (
+                <div className="text-[10px] text-gray-600 mt-0.5">
+                  Finish at: <span className="font-medium">{finishClock}</span>
+                </div>
+              )}
             </div>
 
             {extensionDist > 0 && (
               <div className="text-xs text-gray-600">
-                <div>Extension: {(extensionDist / 1000).toFixed(2)} km</div>
+                <div>
+                  Extension: {(extensionDist / 1000).toFixed(2)} km
+                  {snappedRoute ? (
+                    <span className="ml-1 text-green-700">(on roads/trails)</span>
+                  ) : routeLoading ? (
+                    <span className="ml-1 text-gray-400">(routing…)</span>
+                  ) : (
+                    <span className="ml-1 text-amber-600">(straight line)</span>
+                  )}
+                </div>
                 {impliedPace && <div>Implied pace: {impliedPace}/km</div>}
                 {extensionTime != null && extensionTime > 0 && (
                   <div>Extension time: {formatTime(extensionTime)}</div>
@@ -198,13 +248,16 @@ export default function RunExtension({
 
             <button
               onClick={handlePreview}
-              disabled={waypoints.length < 2 || finishTime == null}
+              disabled={waypoints.length < 2 || finishTime == null || routeLoading}
               className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Preview
             </button>
           </div>
 
+          {routeError && !routeLoading && (
+            <div className="text-xs text-amber-600">{routeError}</div>
+          )}
           {error && <div className="text-xs text-red-600">{error}</div>}
         </>
       )}
@@ -216,9 +269,12 @@ export default function RunExtension({
               +{(extensionDist / 1000).toFixed(2)} km, +{formatTime(extensionTime ?? 0)}
             </div>
             <div>
-              New total: {((lastRecord?.distance ?? 0 + extensionDist) / 1000).toFixed(2)} km
+              New total: {(((lastRecord?.distance ?? 0) + extensionDist) / 1000).toFixed(2)} km
               in {formatTime(finishTime ?? 0)}
             </div>
+            {finishClock && (
+              <div>Finish at: <span className="font-medium">{finishClock}</span></div>
+            )}
             {impliedPace && <div>Extension pace: {impliedPace}/km</div>}
           </div>
 
