@@ -93,4 +93,10 @@ export interface ParsedActivity {
   /** Whether segments were auto-detected from record data */
   segmentsDetected: boolean;
   records: RecordPoint[];
+  /** Number of original records before extension. Records beyond this are synthetic. */
+  originalRecordCount?: number;
+  /** Whether this activity has been extended with synthetic data */
+  extended?: boolean;
+  /** Raw decoded FIT messages for faithful re-export */
+  rawFitMessages?: Record<string, unknown[]>;
 }

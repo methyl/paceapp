@@ -1,4 +1,5 @@
 import FitParser from "fit-file-parser";
+import { Decoder, Stream } from "@garmin/fitsdk";
 import { detectWorkoutType } from "./detectWorkout";
 import { getEffortSegments } from "./segmenter";
 import { generateWorkoutLabel } from "./labeller";
@@ -155,6 +156,29 @@ export async function parseFitFile(
   const workoutType = detectWorkoutType(summary, laps);
   const workoutLabel = generateWorkoutLabel(effortSegments, summary.totalDistance, workoutType, records);
 
+  // Decode raw FIT messages with Garmin SDK for faithful re-export
+  let rawFitMessages: Record<string, unknown[]> | undefined;
+  try {
+    const stream = Stream.fromArrayBuffer(buffer);
+    const decoder = new Decoder(stream);
+    if (decoder.isFIT()) {
+      const { messages } = decoder.read();
+      rawFitMessages = {};
+      for (const [key, value] of Object.entries(messages)) {
+        if (Array.isArray(value) && value.length > 0) {
+          rawFitMessages[key] = value.map((m: unknown) => {
+            const obj = m as Record<string, unknown>;
+            const clean = { ...obj };
+            delete clean.developerFields;
+            return clean;
+          });
+        }
+      }
+    }
+  } catch {
+    // Garmin SDK decode failed — not critical, export just won't work
+  }
+
   return {
     id: `${fileName}-${++idCounter}`,
     fileName,
@@ -165,6 +189,7 @@ export async function parseFitFile(
     segments: effortSegments,
     segmentsDetected,
     records,
+    rawFitMessages,
   };
 }
 

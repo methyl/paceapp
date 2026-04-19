@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@garmin/fitsdk": "^21.200.0",
     "fit-file-parser": "^2.3.3",
     "leaflet": "^1.9.4",
     "react": "^19.2.4",

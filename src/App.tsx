@@ -11,8 +11,10 @@ import SegmentHistory from "./components/SegmentHistory";
 import HillSprintsView from "./components/HillSprints";
 import RouteMap from "./components/RouteMap";
 import LibraryMap from "./components/LibraryMap";
+import RunExtension from "./components/RunExtension";
 import { parseFitFile, reprocessActivity } from "./parseFit";
 import { loadActivities, saveActivities, clearActivities } from "./storage";
+import { exportActivityToFit, downloadFitFile } from "./exportFit";
 import { getZ2Ceiling, setZ2Ceiling } from "./detectWorkout";
 import type { ParsedActivity, WorkoutType } from "./types";
 import { WORKOUT_LABELS, WORKOUT_COLORS } from "./types";
@@ -29,6 +31,8 @@ function App() {
   const [filterType, setFilterType] = useState<WorkoutType | "all">("all");
   const [showOriginalLaps, setShowOriginalLaps] = useState(false);
   const [z2, setZ2] = useState(getZ2Ceiling);
+  const [extensionWaypoints, setExtensionWaypoints] = useState<[number, number][]>([]);
+  const [extensionMode, setExtensionMode] = useState(false);
   const [timeRange, setTimeRange] = useState<string>("all");
 
   const isRunning = (a: ParsedActivity) =>
@@ -128,7 +132,32 @@ function App() {
   const handleSelectActivity = (a: ParsedActivity) => {
     setSelected(a);
     setView("detail");
+    setExtensionMode(false);
+    setExtensionWaypoints([]);
   };
+
+  const handleExtend = useCallback((extended: ParsedActivity) => {
+    const reprocessed = reprocessActivity(extended);
+    setActivities((prev) => prev.map((a) => a.id === reprocessed.id ? reprocessed : a));
+    setSelected(reprocessed);
+    setExtensionMode(false);
+    setExtensionWaypoints([]);
+  }, []);
+
+  const handleUndoExtension = useCallback((original: ParsedActivity) => {
+    const reprocessed = reprocessActivity(original);
+    setActivities((prev) => prev.map((a) => a.id === reprocessed.id ? reprocessed : a));
+    setSelected(reprocessed);
+  }, []);
+
+  const handleExport = useCallback(() => {
+    if (!selected) return;
+    const data = exportActivityToFit(selected);
+    const date = selected.summary.startTime
+      ? new Date(selected.summary.startTime).toISOString().slice(0, 10)
+      : "export";
+    downloadFitFile(data, `${date}-${selected.workoutType}.fit`);
+  }, [selected]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -312,7 +341,30 @@ function App() {
               <span className="text-sm font-medium text-gray-700">{selected.workoutLabel}</span>
             </div>
             <Summary summary={selected.summary} />
-            <RouteMap records={selected.records} />
+            <RouteMap
+              records={selected.records}
+              height={extensionMode ? 400 : 250}
+              editMode={extensionMode}
+              waypoints={extensionWaypoints}
+              onWaypointsChange={setExtensionWaypoints}
+            />
+            <div className="flex items-center gap-3">
+              <RunExtension
+                activity={selected}
+                onExtend={handleExtend}
+                onUndo={handleUndoExtension}
+                waypoints={extensionWaypoints}
+                onWaypointsChange={setExtensionWaypoints}
+                _editMode={extensionMode}
+                onEditModeChange={setExtensionMode}
+              />
+              <button
+                onClick={handleExport}
+                className="text-sm text-gray-600 hover:text-gray-800 font-medium"
+              >
+                Export FIT
+              </button>
+            </div>
             {selected.segmentsDetected && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-blue-800 text-sm">
                 Auto-laps detected — showing {selected.segments.length} effort segments based on pace changes.
