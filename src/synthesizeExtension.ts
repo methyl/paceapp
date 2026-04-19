@@ -305,6 +305,11 @@ export interface MetricStats {
   min: number;
   max: number;
   count: number;
+  /** Lag-1 autocorrelation estimated from consecutive non-null source samples.
+   * Feeds the AR(1) generator so synthetic evolution is as smooth as the
+   * source. Hardcoded values (~0.88) produced near-white noise that looked
+   * visibly jagged vs. the watch's heavily autocorrelated record stream. */
+  alpha: number;
 }
 
 export interface RecentTrend {
@@ -337,13 +342,30 @@ export interface RecentTrend {
 function computeStats(vals: (number | undefined)[]): MetricStats {
   const v = vals.filter((x): x is number => x != null);
   if (v.length === 0) {
-    return { mean: 0, std: 0, last: 0, min: 0, max: 0, count: 0 };
+    return { mean: 0, std: 0, last: 0, min: 0, max: 0, count: 0, alpha: 0.95 };
   }
   const mean = v.reduce((s, x) => s + x, 0) / v.length;
   const variance =
     v.length > 1
       ? v.reduce((s, x) => s + (x - mean) ** 2, 0) / (v.length - 1)
       : 0;
+
+  // Lag-1 autocorrelation, using the ORIGINAL (ordered) sequence so we pair
+  // temporally-adjacent samples; filtering first and indexing would pair
+  // samples across sensor gaps. Cap at 0.995 to keep AR(1) stable.
+  let pairSum = 0;
+  let pairCount = 0;
+  for (let i = 1; i < vals.length; i++) {
+    const a = vals[i - 1];
+    const b = vals[i];
+    if (a != null && b != null) {
+      pairSum += (a - mean) * (b - mean);
+      pairCount++;
+    }
+  }
+  const cov = pairCount > 0 ? pairSum / pairCount : 0;
+  const alpha = variance > 0 ? Math.max(0, Math.min(0.995, cov / variance)) : 0.95;
+
   return {
     mean,
     std: Math.sqrt(variance),
@@ -351,6 +373,7 @@ function computeStats(vals: (number | undefined)[]): MetricStats {
     min: Math.min(...v),
     max: Math.max(...v),
     count: v.length,
+    alpha,
   };
 }
 
@@ -507,18 +530,36 @@ export function analyzePaceMatchedTrend(
 
   // Preserve smooth handoff from the real recording: AR(1) generators are
   // seeded at `.last`, so use the actual last record's value there.
-  const withLast = (s: MetricStats, last: number | undefined): MetricStats =>
-    last != null ? { ...s, last } : s;
+  //
+  // Override alpha from the FULL run (temporally contiguous), not from the
+  // pace-matched subset or the recent tail. computeStats derives alpha from
+  // consecutive-array pairs, so:
+  //  - pace-matched subset: consecutive entries may be hundreds of seconds
+  //    apart → alpha collapses to near-zero
+  //  - recent tail: often includes the slowdown/fumbling before the watch
+  //    died, which looks noisier than race-pace records → alpha underestimated
+  // The full run gives the best lag-1 estimate of real second-to-second
+  // sensor smoothness.
+  const fullStats = buildStats(records);
+  const refine = (s: MetricStats, last: number | undefined, alpha: number): MetricStats => ({
+    ...s,
+    last: last != null ? last : s.last,
+    alpha,
+  });
 
-  const speed = withLast(stats.speed, lastReal.speed);
-  const hr = withLast(stats.hr, lastReal.heartRate);
-  const cadence = withLast(stats.cadence, lastReal.cadence);
-  const vo = withLast(stats.vo, lastReal.verticalOscillation);
-  const gct = withLast(stats.gct, lastReal.groundContactTime);
-  const gctBalance = withLast(stats.gctBalance, lastReal.groundContactTimeBalance);
-  const stride = withLast(stats.stride, lastReal.strideLength);
-  const verticalRatio = withLast(stats.verticalRatio, lastReal.verticalRatio);
-  const power = withLast(stats.power, lastReal.power);
+  const speed = refine(stats.speed, lastReal.speed, fullStats.speed.alpha);
+  const hr = refine(stats.hr, lastReal.heartRate, fullStats.hr.alpha);
+  const cadence = refine(stats.cadence, lastReal.cadence, fullStats.cadence.alpha);
+  const vo = refine(stats.vo, lastReal.verticalOscillation, fullStats.vo.alpha);
+  const gct = refine(stats.gct, lastReal.groundContactTime, fullStats.gct.alpha);
+  const gctBalance = refine(
+    stats.gctBalance, lastReal.groundContactTimeBalance, fullStats.gctBalance.alpha,
+  );
+  const stride = refine(stats.stride, lastReal.strideLength, fullStats.stride.alpha);
+  const verticalRatio = refine(
+    stats.verticalRatio, lastReal.verticalRatio, fullStats.verticalRatio.alpha,
+  );
+  const power = refine(stats.power, lastReal.power, fullStats.power.alpha);
   // Altitude should reflect where the runner actually is now, not average
   // altitude over the pace-matched subset which could be anywhere on the course.
   const altitude = recent.altitude;
@@ -639,9 +680,12 @@ export function synthesizeRecords(params: {
 
   // Per-step pace deviation. If the recent window is unusually steady
   // (treadmill, pacing target) fall back to a modest 5% of target so the
-  // extension still has believable micro-variation.
+  // extension still has believable micro-variation. Alpha floor: real speed
+  // data autocorrelates strongly; a low estimate here produces white-noise
+  // pace jitter that looks nothing like GPS speed readings.
   const paceStd = trend.speed.std > 0 ? trend.speed.std : targetSpeed * 0.05;
-  const paceDev = createAR1(0, paceStd, 0.95, 0);
+  const paceAlpha = Math.max(trend.speed.alpha, 0.9);
+  const paceDev = createAR1(0, paceStd, paceAlpha, 0);
 
   // Seed each AR(1) at the last observed value to blend smoothly from the
   // real data into the synthetic extension.
@@ -651,20 +695,45 @@ export function synthesizeRecords(params: {
   // pace-matched mean. Without this, a slowdown-before-watch-died would
   // leave HR anchored at a suppressed value and slope-extrapolated downward
   // for the whole extension.
+  //
+  // AR(1) alpha per metric is taken from the source's lag-1 autocorrelation
+  // — hardcoded low values (0.85-0.9) produced step-to-step jumps several
+  // times larger than the watch's own record-to-record variation, so the
+  // extension looked visibly noisy next to the original on stride / vertical
+  // ratio / power charts. Floored at 0.9 because a momentary slowdown can
+  // depress the estimate below what the source actually looks like at pace.
   const hrMean = trend.hr.mean > 0 ? trend.hr.mean : trend.hr.last;
   const hrBaseline = trend.hr.last > 0 ? trend.hr.last : hrMean;
-  const hrDevGen = createAR1(0, trend.hr.std, 0.95, hrBaseline - hrMean);
-  const cadenceGen = createAR1(trend.cadence.mean, trend.cadence.std, 0.9, trend.cadence.last);
-  const voGen = createAR1(trend.vo.mean, trend.vo.std, 0.85, trend.vo.last);
-  const gctGen = createAR1(trend.gct.mean, trend.gct.std, 0.85, trend.gct.last);
+  const hrDevGen = createAR1(
+    0, trend.hr.std, Math.max(trend.hr.alpha, 0.9), hrBaseline - hrMean,
+  );
+  const cadenceGen = createAR1(
+    trend.cadence.mean, trend.cadence.std, Math.max(trend.cadence.alpha, 0.9), trend.cadence.last,
+  );
+  const voGen = createAR1(
+    trend.vo.mean, trend.vo.std, Math.max(trend.vo.alpha, 0.9), trend.vo.last,
+  );
+  const gctGen = createAR1(
+    trend.gct.mean, trend.gct.std, Math.max(trend.gct.alpha, 0.9), trend.gct.last,
+  );
   const gctBalanceGen = createAR1(
-    trend.gctBalance.mean, trend.gctBalance.std, 0.9, trend.gctBalance.last,
+    trend.gctBalance.mean,
+    trend.gctBalance.std,
+    Math.max(trend.gctBalance.alpha, 0.9),
+    trend.gctBalance.last,
   );
-  const strideGen = createAR1(trend.stride.mean, trend.stride.std, 0.88, trend.stride.last);
+  const strideGen = createAR1(
+    trend.stride.mean, trend.stride.std, Math.max(trend.stride.alpha, 0.9), trend.stride.last,
+  );
   const vrGen = createAR1(
-    trend.verticalRatio.mean, trend.verticalRatio.std, 0.85, trend.verticalRatio.last,
+    trend.verticalRatio.mean,
+    trend.verticalRatio.std,
+    Math.max(trend.verticalRatio.alpha, 0.9),
+    trend.verticalRatio.last,
   );
-  const powerGen = createAR1(trend.power.mean, trend.power.std, 0.88, trend.power.last);
+  const powerGen = createAR1(
+    trend.power.mean, trend.power.std, Math.max(trend.power.alpha, 0.9), trend.power.last,
+  );
   // Altitude: tiny drift around the last known value; real terrain is unknown.
   const altStd = trend.altitude.std > 0 ? Math.min(trend.altitude.std, 1) : 0.2;
   const altGen = createAR1(trend.altitude.last, altStd, 0.98, trend.altitude.last);
