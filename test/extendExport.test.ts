@@ -172,4 +172,54 @@ describe("Extended FIT export includes extension laps", () => {
     expect(new Date(lastStop!.timestamp as string | Date).getTime())
       .toBe(new Date(lastRec.timestamp).getTime());
   });
+
+  it("lap totalCycles is consistent with avgCadence × time", async () => {
+    // Apple Health and Strava derive the cadence chart from
+    // totalCycles / totalTimerTime × 60. If the extension lap inherits
+    // totalCycles from a sibling lap (e.g., 1022 cycles copied into a
+    // 30-minute lap) the chart shows a nonsense cadence (~65 spm instead
+    // of ~165 spm) — the red flat line the user saw in Apple Health.
+    const { rawMessages } = await extendAndExport("2026-04-08");
+    const laps = rawMessages.lapMesgs as Record<string, unknown>[];
+    for (const lap of laps) {
+      const cycles = (lap.totalCycles ?? 0) as number;
+      const time = (lap.totalTimerTime ?? 0) as number;
+      const avgCadHalfRpm = (lap.avgCadence ?? 0) as number;
+      if (!cycles || !time || !avgCadHalfRpm) continue;
+      const implied = (cycles / time) * 60;
+      // Allow 1 rpm of rounding slack (integer cadence + fractional).
+      expect(Math.abs(implied - avgCadHalfRpm)).toBeLessThan(2);
+    }
+  });
+
+  it("all original lap values round-trip without corruption", async () => {
+    // The Garmin SDK encoder has a MesgDefinition-equality bug: messages
+    // with the same field set but different key-iteration order share a
+    // localMesgNum, so the second message's bytes decode against the
+    // first's field order. Original lap 4 here has the same keys as lap 0
+    // but in a different order — without key-order normalization, its
+    // totalDistance decodes as ~10m and totalCycles as ~700M.
+    const { original, rawMessages } = await extendAndExport("2026-04-08");
+    const rawOrig = original.rawFitMessages?.lapMesgs as Record<string, unknown>[];
+    const origCount = rawOrig.length;
+    const reLaps = rawMessages.lapMesgs as Record<string, unknown>[];
+    for (let i = 0; i < origCount; i++) {
+      expect(reLaps[i].totalDistance).toBeCloseTo(rawOrig[i].totalDistance as number, 1);
+      expect(reLaps[i].totalCycles).toBe(rawOrig[i].totalCycles);
+      expect(reLaps[i].avgCadence).toBe(rawOrig[i].avgCadence);
+      expect(reLaps[i].avgSpeed).toBeCloseTo(rawOrig[i].avgSpeed as number, 2);
+    }
+  });
+
+  it("session totalCycles is consistent with all records", async () => {
+    const { extended, rawMessages } = await extendAndExport("2026-04-08");
+    const session = rawMessages.sessionMesgs[0] as Record<string, unknown>;
+    const cycles = session.totalCycles as number;
+    const time = session.totalTimerTime as number;
+    const avgCad = session.avgCadence as number;
+    const implied = (cycles / time) * 60;
+    expect(Math.abs(implied - avgCad)).toBeLessThan(2);
+    // Sanity: sum of extension records' time-integrated cadence is reflected.
+    expect(time).toBe(extended.records[extended.records.length - 1].elapsed);
+  });
 });
