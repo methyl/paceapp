@@ -95,8 +95,21 @@ export interface ParsedActivity {
   records: RecordPoint[];
   /** Number of original records before extension. Records beyond this are synthetic. */
   originalRecordCount?: number;
-  /** Number of original laps before extension. Laps beyond this are synthetic. */
+  /**
+   * Number of original laps preserved unchanged at the head of `laps`.
+   * If the original run's trailing lap was a partial auto-lap that got
+   * absorbed into the extension, that lap is NOT counted here — the first
+   * extension lap at index `originalLapCount` is the merged replacement,
+   * and the partial is saved in `replacedPartialLap` for undo.
+   */
   originalLapCount?: number;
+  /**
+   * Snapshot of the original partial trailing lap that was absorbed by the
+   * extension (if any). Set only when an auto-lap-paced run ended mid-lap
+   * and the extension completed that lap. Used to restore the original lap
+   * table on undo.
+   */
+  replacedPartialLap?: LapSummary;
   /** Whether this activity has been extended with synthetic data */
   extended?: boolean;
   /** Raw decoded FIT messages for faithful re-export */

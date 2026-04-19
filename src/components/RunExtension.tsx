@@ -174,14 +174,24 @@ export default function RunExtension({
 
     const mergedRecords = [...activity.records, ...synthetic];
     const lastMerged = mergedRecords[mergedRecords.length - 1];
-    const extensionLaps = buildExtensionLaps(synthetic, activity.laps);
+    const { laps: extensionLaps, replacesLastExistingLap } = buildExtensionLaps(
+      synthetic, activity.laps,
+    );
+
+    const untouched = replacesLastExistingLap
+      ? activity.laps.slice(0, -1)
+      : activity.laps;
+    const replacedPartialLap = replacesLastExistingLap
+      ? activity.laps[activity.laps.length - 1]
+      : undefined;
 
     const extended: ParsedActivity = {
       ...activity,
       records: mergedRecords,
-      laps: [...activity.laps, ...extensionLaps],
+      laps: [...untouched, ...extensionLaps],
       originalRecordCount: activity.records.length,
-      originalLapCount: activity.laps.length,
+      originalLapCount: untouched.length,
+      replacedPartialLap,
       extended: true,
       summary: {
         ...activity.summary,
@@ -236,17 +246,33 @@ export default function RunExtension({
       });
       if (newSynth.length === 0) return;
 
-      const baseLaps = activity.laps.slice(0, origLapCount);
-      const extensionLaps = buildExtensionLaps(newSynth, baseLaps);
+      // Reconstruct the pre-extension lap list: untouched original laps plus
+      // the partial lap (if it was previously absorbed) so we can redetect
+      // and re-absorb it cleanly during the new synthesis.
+      const preExtensionLaps = activity.replacedPartialLap
+        ? [...activity.laps.slice(0, origLapCount), activity.replacedPartialLap]
+        : activity.laps.slice(0, origLapCount);
+
+      const { laps: extensionLaps, replacesLastExistingLap } = buildExtensionLaps(
+        newSynth, preExtensionLaps,
+      );
+      const untouched = replacesLastExistingLap
+        ? preExtensionLaps.slice(0, -1)
+        : preExtensionLaps;
+      const replacedPartialLap = replacesLastExistingLap
+        ? preExtensionLaps[preExtensionLaps.length - 1]
+        : undefined;
+
       const mergedRecords = [...originalRecs, ...newSynth];
       const lastMerged = mergedRecords[mergedRecords.length - 1];
 
       const reExtended: ParsedActivity = {
         ...activity,
         records: mergedRecords,
-        laps: [...baseLaps, ...extensionLaps],
+        laps: [...untouched, ...extensionLaps],
         originalRecordCount: originalRecs.length,
-        originalLapCount: baseLaps.length,
+        originalLapCount: untouched.length,
+        replacedPartialLap,
         extended: true,
         summary: {
           ...activity.summary,
@@ -271,16 +297,23 @@ export default function RunExtension({
         </button>
         <button
           onClick={() => {
+            const restoredLaps =
+              activity.originalLapCount != null
+                ? activity.replacedPartialLap
+                  ? [
+                      ...activity.laps.slice(0, activity.originalLapCount),
+                      activity.replacedPartialLap,
+                    ]
+                  : activity.laps.slice(0, activity.originalLapCount)
+                : activity.laps;
             const original: ParsedActivity = {
               ...activity,
               records: activity.records.slice(0, activity.originalRecordCount),
-              laps:
-                activity.originalLapCount != null
-                  ? activity.laps.slice(0, activity.originalLapCount)
-                  : activity.laps,
+              laps: restoredLaps,
               extended: false,
               originalRecordCount: undefined,
               originalLapCount: undefined,
+              replacedPartialLap: undefined,
             };
             onUndo(original);
           }}

@@ -4,8 +4,9 @@ import {
   interpolateAlongPolyline,
   analyzeRecentTrend,
   synthesizeRecords,
+  buildExtensionLaps,
 } from "../src/synthesizeExtension";
-import type { RecordPoint } from "../src/types";
+import type { LapSummary, RecordPoint } from "../src/types";
 
 function makeRecords(count: number, startLat = 51.11, startLng = 17.05): RecordPoint[] {
   const records: RecordPoint[] = [];
@@ -333,5 +334,172 @@ describe("synthesizeRecords", () => {
     const firstSynHR = synthetic[0].heartRate!;
     // First synthetic HR should be within ~8 bpm of the last real HR.
     expect(Math.abs(firstSynHR - lastReal.heartRate!)).toBeLessThan(8);
+  });
+
+  it("HR recovers to race-pace mean even when the run ended with a slowdown", () => {
+    // Runner ran at HR ~150 (race pace) for most of the run, then slowed
+    // in the final minutes and HR dropped to 125. The extension should
+    // recover back toward the race-pace HR — not extrapolate the slowdown
+    // decline downward for the whole extension.
+    const base = new Date("2026-04-01T10:00:00Z").getTime();
+    const records: RecordPoint[] = [];
+    let dist = 0;
+    for (let i = 0; i < 1500; i++) {
+      const slowing = i >= 1200;
+      const speed = slowing ? 2.5 : 3.5;
+      dist += speed;
+      records.push({
+        timestamp: new Date(base + i * 1000).toISOString(),
+        elapsed: i,
+        distance: dist,
+        altitude: 100,
+        lat: 51 + i * 1e-5,
+        lng: 17,
+        heartRate: slowing ? 125 + Math.random() * 3 : 150 + Math.random() * 4,
+        cadence: slowing ? 158 : 172,
+        speed,
+        verticalOscillation: 90,
+        groundContactTime: 250,
+        strideLength: 1200,
+        verticalRatio: 8,
+        power: 240,
+        lapIndex: 1,
+      });
+    }
+    const lastReal = records[records.length - 1];
+    const extDist = 3.5 * 600;
+    const latDelta = extDist / 111_000;
+    const synthetic = synthesizeRecords({
+      existingRecords: records,
+      waypoints: [
+        [lastReal.lat!, lastReal.lng!],
+        [lastReal.lat! + latDelta, lastReal.lng!],
+      ],
+      totalFinishTimeSeconds: lastReal.elapsed + 600,
+    });
+
+    const firstHR = synthetic[0].heartRate!;
+    // Handoff stays smooth — first synth HR is close to the last real HR.
+    expect(Math.abs(firstHR - lastReal.heartRate!)).toBeLessThan(10);
+
+    // After ~90 seconds HR should have recovered toward the race-pace mean
+    // (~150), not kept dropping toward 100.
+    const midPoint = synthetic[Math.floor(synthetic.length * 0.5)].heartRate!;
+    expect(midPoint).toBeGreaterThan(140);
+    expect(midPoint).toBeLessThan(160);
+
+    // Last-half mean HR should be solidly in race-pace range.
+    const second = synthetic.slice(Math.floor(synthetic.length / 2));
+    const meanEnd = second
+      .map((r) => r.heartRate!)
+      .reduce((a, b) => a + b, 0) / second.length;
+    expect(meanEnd).toBeGreaterThan(142);
+    expect(meanEnd).toBeLessThan(158);
+  });
+});
+
+function makeLap(
+  lapIndex: number,
+  startTime: string,
+  dist: number,
+  time: number,
+  cadence = 170,
+): LapSummary {
+  return {
+    lapIndex,
+    startTime,
+    totalDistance: dist,
+    totalElapsedTime: time,
+    avgSpeed: dist / time,
+    avgPace: "0:00",
+    avgCadence: cadence,
+    avgHeartRate: 150,
+    maxHeartRate: 155,
+    avgVerticalOscillation: 90,
+    avgGroundContactTime: 250,
+    avgStrideLength: 1200,
+    avgVerticalRatio: 8,
+    avgPower: 240,
+  };
+}
+
+describe("buildExtensionLaps", () => {
+  function makeSynthRecords(
+    count: number,
+    startDist: number,
+    startElapsed: number,
+  ): RecordPoint[] {
+    const base = new Date("2026-04-01T11:00:00Z").getTime();
+    const recs: RecordPoint[] = [];
+    for (let i = 0; i < count; i++) {
+      recs.push({
+        timestamp: new Date(base + i * 1000).toISOString(),
+        elapsed: startElapsed + i,
+        distance: startDist + i * 3,
+        altitude: 100,
+        lat: 51,
+        lng: 17,
+        heartRate: 150,
+        cadence: 170,
+        speed: 3,
+        verticalOscillation: 90,
+        groundContactTime: 250,
+        strideLength: 1200,
+        verticalRatio: 8,
+        power: 240,
+        lapIndex: 18,
+      });
+    }
+    return recs;
+  }
+
+  it("absorbs a partial trailing auto-lap into the first synth chunk", () => {
+    // 17 full 1-km auto-laps + 1 partial 0.37km lap (watch died mid-lap).
+    const existing: LapSummary[] = [];
+    let t = 0;
+    for (let i = 1; i <= 17; i++) {
+      existing.push(makeLap(i, new Date(t * 1000).toISOString(), 1000, 330));
+      t += 330;
+    }
+    existing.push(makeLap(18, new Date(t * 1000).toISOString(), 370, 124));
+
+    // Synth continues from where the partial lap ends.
+    const synth = makeSynthRecords(600, 17370, 5734);
+
+    const { laps, replacesLastExistingLap } = buildExtensionLaps(synth, existing);
+    expect(replacesLastExistingLap).toBe(true);
+    expect(laps.length).toBeGreaterThan(0);
+
+    // First returned lap is the merged lap — distance should be ~1 km total,
+    // keeping the partial lap's lapIndex.
+    const merged = laps[0];
+    expect(merged.lapIndex).toBe(18);
+    expect(merged.totalDistance).toBeGreaterThan(950);
+    expect(merged.totalDistance).toBeLessThan(1100);
+    // Combined time is partial time + synth portion time.
+    expect(merged.totalElapsedTime).toBeGreaterThan(124);
+  });
+
+  it("does not absorb when trailing lap is a full auto-lap", () => {
+    // All laps are a clean 1 km — no partial at the end.
+    const existing: LapSummary[] = [];
+    for (let i = 1; i <= 18; i++) {
+      existing.push(makeLap(i, new Date(i * 330 * 1000).toISOString(), 1000, 330));
+    }
+    const synth = makeSynthRecords(600, 18000, 5940);
+    const { replacesLastExistingLap } = buildExtensionLaps(synth, existing);
+    expect(replacesLastExistingLap).toBe(false);
+  });
+
+  it("does not absorb for non-auto-lap activities", () => {
+    // Laps of wildly different distances — not auto-lap pattern.
+    const existing: LapSummary[] = [
+      makeLap(1, "2026-04-01T10:00:00Z", 500, 150),
+      makeLap(2, "2026-04-01T10:02:30Z", 2000, 660),
+      makeLap(3, "2026-04-01T10:13:30Z", 300, 90),
+    ];
+    const synth = makeSynthRecords(300, 2800, 900);
+    const { replacesLastExistingLap } = buildExtensionLaps(synth, existing);
+    expect(replacesLastExistingLap).toBe(false);
   });
 });

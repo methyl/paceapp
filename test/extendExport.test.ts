@@ -44,13 +44,22 @@ async function extendAndExport(pattern: string): Promise<{
   });
   expect(synthetic.length).toBeGreaterThan(0);
 
-  const extensionLaps = buildExtensionLaps(synthetic, original.laps);
+  const { laps: extensionLaps, replacesLastExistingLap } = buildExtensionLaps(
+    synthetic, original.laps,
+  );
+  const untouched = replacesLastExistingLap
+    ? original.laps.slice(0, -1)
+    : original.laps;
+  const replacedPartialLap = replacesLastExistingLap
+    ? original.laps[original.laps.length - 1]
+    : undefined;
   const extended: ParsedActivity = reprocessActivity({
     ...original,
     records: [...original.records, ...synthetic],
-    laps: [...original.laps, ...extensionLaps],
+    laps: [...untouched, ...extensionLaps],
     originalRecordCount: original.records.length,
-    originalLapCount: original.laps.length,
+    originalLapCount: untouched.length,
+    replacedPartialLap,
     extended: true,
   });
 
