@@ -1,6 +1,10 @@
 import { Encoder } from "@garmin/fitsdk";
 import type { ParsedActivity, RecordPoint } from "./types";
-import { detectAutoLapDistance, splitRecordsByDistance } from "./synthesizeExtension";
+import {
+  detectAutoLapDistance,
+  splitRecordsByDistance,
+  splitRecordsWithFirstOffset,
+} from "./synthesizeExtension";
 
 /**
  * FIT message numbers from the FIT SDK profile.
@@ -21,12 +25,27 @@ const MESG = {
 const SEMICIRCLE = 2 ** 31 / 180;
 
 /**
+ * Normalize a timestamp-like value (ISO string, Date, or number) to a Date
+ * object. The Garmin FIT encoder reads Date objects and silently encodes
+ * ISO strings as the FIT epoch (1989-12-31), which makes the activity look
+ * invalid to strict parsers — they drop everything after the first bad
+ * timestamp, so the extension is invisible in external apps.
+ */
+function toDate(ts: unknown): Date {
+  if (ts instanceof Date) return ts;
+  if (typeof ts === "string" || typeof ts === "number") return new Date(ts);
+  // Unknown shape — return now rather than crash; the encoder will at least
+  // produce a parseable file.
+  return new Date();
+}
+
+/**
  * Convert a RecordPoint to a FIT record message.
  * Matches the field names the Garmin SDK Encoder expects (camelCase).
  */
 function recordToFitMesg(r: RecordPoint): Record<string, unknown> {
   const mesg: Record<string, unknown> = {
-    timestamp: r.timestamp,
+    timestamp: toDate(r.timestamp),
   };
   if (r.lat != null && r.lng != null) {
     // Convert degrees to FIT semicircles
@@ -93,7 +112,39 @@ function exportWithRawMessages(
   writeMesgs("fileIdMesgs", MESG.fileId);
   writeMesgs("fileCreatorMesgs", MESG.fileCreator);
   writeMesgs("deviceInfoMesgs", MESG.deviceInfo);
-  writeMesgs("eventMesgs", MESG.event);
+
+  // Events: when the activity is extended, the trailing timer-stop event
+  // from the original FIT points at the old end time. Strict external
+  // parsers use that as the end-of-activity marker and ignore everything
+  // after — the extension becomes invisible. Drop trailing stop events and
+  // write a fresh one at the extended end.
+  const events = [...((raw.eventMesgs ?? []) as Record<string, unknown>[])];
+  if (activity.extended) {
+    while (events.length > 0) {
+      const last = events[events.length - 1];
+      const isStop =
+        (last.event === "timer" || last.event === "session") &&
+        (last.eventType === "stop" ||
+          last.eventType === "stopAll" ||
+          last.eventType === "stopDisableAll");
+      if (isStop) events.pop();
+      else break;
+    }
+  }
+  for (const m of events) {
+    // Write event fields in a consistent order; the Garmin SDK encoder
+    // garbles eventType when `data` is listed before it in the object.
+    encoder.writeMesg({
+      mesgNum: MESG.event,
+      timestamp: m.timestamp,
+      event: m.event,
+      eventType: m.eventType,
+      eventGroup: m.eventGroup,
+      timerTrigger: m.timerTrigger,
+      data: m.data,
+    });
+  }
+
   writeMesgs("sportMesgs", MESG.sport);
 
   // Write ALL records (original + synthetic) from our RecordPoint array
@@ -101,33 +152,73 @@ function exportWithRawMessages(
     encoder.writeMesg({ mesgNum: MESG.record, ...recordToFitMesg(r) });
   }
 
+  // Fresh end-of-activity stop event at the extended end time, replacing
+  // the original trailing stop we filtered above.
+  if (activity.extended && activity.records.length > 0) {
+    const lastRec = activity.records[activity.records.length - 1];
+    encoder.writeMesg({
+      mesgNum: MESG.event,
+      timestamp: toDate(lastRec.timestamp),
+      event: "timer",
+      eventType: "stopAll",
+    });
+  }
+
   const origLapCount = activity.originalLapCount ?? raw.lapMesgs?.length ?? activity.laps.length;
   let numLaps = activity.laps.length;
 
   // Write laps — use raw if not extended, otherwise rebuild
   if (activity.extended && raw.lapMesgs) {
-    // Write original laps
-    for (const m of raw.lapMesgs) {
-      encoder.writeMesg({ mesgNum: MESG.lap, ...(m as Record<string, unknown>) });
+    const hasAbsorbedPartial = !!activity.replacedPartialLap;
+
+    // Untouched originals: every original lap except the absorbed partial.
+    const untouchedCount = hasAbsorbedPartial
+      ? raw.lapMesgs.length - 1
+      : raw.lapMesgs.length;
+    for (let i = 0; i < untouchedCount; i++) {
+      encoder.writeMesg({
+        mesgNum: MESG.lap,
+        ...(raw.lapMesgs[i] as Record<string, unknown>),
+      });
     }
-    // Add extension lap(s)
+
     const extRecords = activity.records.slice(activity.originalRecordCount ?? 0);
     if (extRecords.length > 0) {
       const sampleLap = raw.lapMesgs[raw.lapMesgs.length - 1] as Record<string, unknown> | undefined;
-      // Detect auto-lap from the original laps only (the extension's own
-      // laps may have been appended to activity.laps by the in-app extender).
+      // Detect auto-lap from the original laps (minus absorbed partial) so
+      // the pattern isn't diluted.
       const origLaps = activity.laps.slice(0, origLapCount);
       const autoLapDist = detectAutoLapDistance(origLaps);
-      const chunks = autoLapDist
-        ? splitRecordsByDistance(extRecords, autoLapDist)
-        : [extRecords];
+
+      let chunks: RecordPoint[][];
+      if (autoLapDist && activity.replacedPartialLap) {
+        const remainder = autoLapDist - activity.replacedPartialLap.totalDistance;
+        chunks = splitRecordsWithFirstOffset(extRecords, autoLapDist, remainder);
+      } else if (autoLapDist) {
+        chunks = splitRecordsByDistance(extRecords, autoLapDist);
+      } else {
+        chunks = [extRecords];
+      }
+
+      // Records that belonged to the absorbed partial lap — merged into the
+      // first extension lap message so the exported FIT matches the in-app
+      // lap table (a full auto-lap), not a stub 0.37 km lap followed by a
+      // strangely-sized extension lap.
+      const partialRealRecords = activity.replacedPartialLap
+        ? recordsInLap(activity, activity.replacedPartialLap)
+        : [];
 
       let idx = origLapCount;
-      for (const chunk of chunks) {
+      for (let ci = 0; ci < chunks.length; ci++) {
+        const chunk = chunks[ci];
         if (chunk.length < 2) continue;
+        const recordsForLap =
+          ci === 0 && partialRealRecords.length > 0
+            ? [...partialRealRecords, ...chunk]
+            : chunk;
         encoder.writeMesg({
           mesgNum: MESG.lap,
-          ...buildExtensionLapMesg(chunk, activity, idx, sampleLap, autoLapDist != null),
+          ...buildExtensionLapMesg(recordsForLap, activity, idx, sampleLap, autoLapDist != null),
         });
         idx++;
       }
@@ -151,7 +242,7 @@ function exportWithRawMessages(
     const act = { ...(raw.activityMesgs[0] as Record<string, unknown>) };
     const lastRec = activity.records[activity.records.length - 1];
     if (lastRec) {
-      act.timestamp = lastRec.timestamp;
+      act.timestamp = toDate(lastRec.timestamp);
       act.totalTimerTime = lastRec.elapsed;
     }
     encoder.writeMesg({ mesgNum: MESG.activity, ...act });
@@ -162,17 +253,19 @@ function exportWithRawMessages(
 
 function exportMinimal(encoder: Encoder, activity: ParsedActivity): Uint8Array {
   // Minimal FIT file when no raw messages available
+  const now = new Date();
+  const startDate = activity.summary.startTime ? toDate(activity.summary.startTime) : now;
   encoder.writeMesg({
     mesgNum: MESG.fileId,
     type: "activity",
     manufacturer: "development",
-    timeCreated: activity.summary.startTime ?? new Date().toISOString(),
+    timeCreated: startDate,
   });
 
   // Start event
   encoder.writeMesg({
     mesgNum: MESG.event,
-    timestamp: activity.summary.startTime ?? new Date().toISOString(),
+    timestamp: startDate,
     event: "timer",
     eventType: "start",
   });
@@ -184,10 +277,11 @@ function exportMinimal(encoder: Encoder, activity: ParsedActivity): Uint8Array {
 
   // Stop event
   const lastRec = activity.records[activity.records.length - 1];
+  const lastDate = lastRec ? toDate(lastRec.timestamp) : now;
   if (lastRec) {
     encoder.writeMesg({
       mesgNum: MESG.event,
-      timestamp: lastRec.timestamp,
+      timestamp: lastDate,
       event: "timer",
       eventType: "stopAll",
     });
@@ -197,8 +291,8 @@ function exportMinimal(encoder: Encoder, activity: ParsedActivity): Uint8Array {
   const s = activity.summary;
   encoder.writeMesg({
     mesgNum: MESG.session,
-    timestamp: lastRec?.timestamp ?? new Date().toISOString(),
-    startTime: s.startTime ?? new Date().toISOString(),
+    timestamp: lastDate,
+    startTime: startDate,
     totalElapsedTime: s.totalElapsedTime,
     totalTimerTime: s.totalElapsedTime,
     totalDistance: s.totalDistance,
@@ -217,7 +311,7 @@ function exportMinimal(encoder: Encoder, activity: ParsedActivity): Uint8Array {
   // Activity
   encoder.writeMesg({
     mesgNum: MESG.activity,
-    timestamp: lastRec?.timestamp ?? new Date().toISOString(),
+    timestamp: lastDate,
     numSessions: 1,
     type: "manual",
     event: "activity",
@@ -274,8 +368,8 @@ function buildExtensionLapMesg(
     // Preserve extra fields (e.g., left/right balance, intensity factor) from a
     // sibling lap so downstream tools don't see gaps the watch would fill in.
     ...(sampleLap ?? {}),
-    timestamp: last.timestamp,
-    startTime: first.timestamp,
+    timestamp: toDate(last.timestamp),
+    startTime: toDate(first.timestamp),
     event: "lap",
     eventType: "stop",
     lapTrigger: isAutoLap ? "distance" : "manual",
@@ -327,6 +421,25 @@ function round(n: number | undefined): number | undefined {
   return n != null ? Math.round(n) : undefined;
 }
 
+/**
+ * Return the original records that fall within a lap's timestamp range.
+ * Used to pull the real records of a partial lap that was absorbed by the
+ * extension so they can be merged with synth records when building the
+ * exported FIT lap message.
+ */
+function recordsInLap(
+  activity: ParsedActivity,
+  lap: { startTime: string; totalElapsedTime: number },
+): RecordPoint[] {
+  const startMs = toDate(lap.startTime).getTime();
+  const endMs = startMs + lap.totalElapsedTime * 1000;
+  const origRecCount = activity.originalRecordCount ?? activity.records.length;
+  return activity.records.slice(0, origRecCount).filter((r) => {
+    const ts = toDate(r.timestamp).getTime();
+    return ts >= startMs && ts <= endMs + 500;
+  });
+}
+
 /** Rough running calorie estimate: ~1 kcal per kg per km. Assumes 70kg — good
  * enough to avoid leaving the field blank in the extension lap. */
 function estimateCalories(timeSeconds: number, speedMps: number): number {
@@ -341,7 +454,7 @@ function updateSessionFromRecords(
 ) {
   if (records.length === 0) return;
   const last = records[records.length - 1];
-  session.timestamp = last.timestamp;
+  session.timestamp = toDate(last.timestamp);
   session.totalDistance = last.distance;
   session.totalElapsedTime = last.elapsed;
   session.totalTimerTime = last.elapsed;

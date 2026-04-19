@@ -129,4 +129,47 @@ describe("Extended FIT export includes extension laps", () => {
     expect(addedLap.totalElapsedTime).toBeGreaterThan(0);
     expect(addedLap.avgPace).toBeTypeOf("string");
   });
+
+  it("all record timestamps decode to real dates (no FIT epoch 1989)", async () => {
+    // A single bad timestamp causes strict parsers (Garmin Connect, Strava
+    // importers) to truncate the activity at that record — the extension
+    // becomes invisible. 0 encodes as 1989-12-31 (the FIT epoch).
+    const { rawMessages } = await extendAndExport("2026-04-08");
+    const records = rawMessages.recordMesgs as Record<string, unknown>[];
+    expect(records.length).toBeGreaterThan(0);
+    for (const r of records) {
+      const ts = new Date(r.timestamp as string | Date).getTime();
+      expect(ts).toBeGreaterThan(new Date("2000-01-01").getTime());
+    }
+  });
+
+  it("session and activity timestamps reflect the extended end time", async () => {
+    const { extended, rawMessages } = await extendAndExport("2026-04-08");
+    const lastRec = extended.records[extended.records.length - 1];
+    const lastRecMs = new Date(lastRec.timestamp).getTime();
+    const session = rawMessages.sessionMesgs[0] as Record<string, unknown>;
+    const activity = rawMessages.activityMesgs[0] as Record<string, unknown>;
+    expect(new Date(session.timestamp as string | Date).getTime()).toBe(lastRecMs);
+    expect(new Date(activity.timestamp as string | Date).getTime()).toBe(lastRecMs);
+    // totalTimerTime spans the full extended duration.
+    expect(session.totalTimerTime).toBe(lastRec.elapsed);
+    expect(activity.totalTimerTime).toBe(lastRec.elapsed);
+  });
+
+  it("trailing timer-stop event marks the extended end, not the original end", async () => {
+    const { extended, rawMessages } = await extendAndExport("2026-04-08");
+    const events = (rawMessages.eventMesgs ?? []) as Record<string, unknown>[];
+    const lastStop = [...events]
+      .reverse()
+      .find((e) =>
+        (e.event === "timer" || e.event === "session") &&
+        (e.eventType === "stop" ||
+          e.eventType === "stopAll" ||
+          e.eventType === "stopDisableAll"),
+      );
+    expect(lastStop).toBeDefined();
+    const lastRec = extended.records[extended.records.length - 1];
+    expect(new Date(lastStop!.timestamp as string | Date).getTime())
+      .toBe(new Date(lastRec.timestamp).getTime());
+  });
 });
