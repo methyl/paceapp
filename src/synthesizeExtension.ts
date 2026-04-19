@@ -161,9 +161,31 @@ export function buildExtensionLaps(
   return result;
 }
 
+export interface MetricStats {
+  mean: number;
+  std: number;
+  last: number;
+  min: number;
+  max: number;
+  count: number;
+}
+
 export interface RecentTrend {
-  avgSpeed: number;
+  // Per-metric distributional stats used to drive realistic variability
+  speed: MetricStats;
+  hr: MetricStats;
+  cadence: MetricStats;
+  vo: MetricStats;
+  gct: MetricStats;
+  gctBalance: MetricStats;
+  stride: MetricStats;
+  verticalRatio: MetricStats;
+  power: MetricStats;
+  altitude: MetricStats;
   hrSlope: number; // bpm per second
+  recordInterval: number; // seconds between records
+  // Legacy flat fields kept for backward compatibility with existing callers.
+  avgSpeed: number;
   lastHR: number;
   maxHR: number;
   avgCadence: number;
@@ -173,32 +195,56 @@ export interface RecentTrend {
   avgVerticalRatio: number;
   avgPower: number;
   lastAltitude: number;
-  recordInterval: number; // seconds between records
+}
+
+function computeStats(vals: (number | undefined)[]): MetricStats {
+  const v = vals.filter((x): x is number => x != null);
+  if (v.length === 0) {
+    return { mean: 0, std: 0, last: 0, min: 0, max: 0, count: 0 };
+  }
+  const mean = v.reduce((s, x) => s + x, 0) / v.length;
+  const variance =
+    v.length > 1
+      ? v.reduce((s, x) => s + (x - mean) ** 2, 0) / (v.length - 1)
+      : 0;
+  return {
+    mean,
+    std: Math.sqrt(variance),
+    last: v[v.length - 1],
+    min: Math.min(...v),
+    max: Math.max(...v),
+    count: v.length,
+  };
 }
 
 /**
- * Analyze the recent portion of the run to extrapolate trends.
+ * Analyze the recent portion of the run to extract per-metric stats used
+ * to extrapolate trends and drive realistic variability in the extension.
+ * Default window is ~5 minutes at 1Hz — long enough to capture natural
+ * variability without overweighting early warmup minutes.
  */
 export function analyzeRecentTrend(
   records: RecordPoint[],
-  windowSize = 60
+  windowSize = 300,
 ): RecentTrend {
   const window = records.slice(-Math.min(windowSize, records.length));
 
-  const avg = (vals: (number | undefined)[]) => {
-    const v = vals.filter((x): x is number => x != null);
-    return v.length > 0 ? v.reduce((s, x) => s + x, 0) / v.length : 0;
-  };
+  const speed = computeStats(window.map((r) => r.speed));
+  const hr = computeStats(window.map((r) => r.heartRate));
+  const cadence = computeStats(window.map((r) => r.cadence));
+  const vo = computeStats(window.map((r) => r.verticalOscillation));
+  const gct = computeStats(window.map((r) => r.groundContactTime));
+  const gctBalance = computeStats(window.map((r) => r.groundContactTimeBalance));
+  const stride = computeStats(window.map((r) => r.strideLength));
+  const verticalRatio = computeStats(window.map((r) => r.verticalRatio));
+  const power = computeStats(window.map((r) => r.power));
+  const altitude = computeStats(window.map((r) => r.altitude));
 
-  // Linear regression on HR vs elapsed time
+  // Linear regression: HR vs elapsed time
   const hrPairs = window
     .filter((r) => r.heartRate != null)
     .map((r) => ({ t: r.elapsed, hr: r.heartRate! }));
-
   let hrSlope = 0;
-  let lastHR = 0;
-  let maxHR = 0;
-
   if (hrPairs.length >= 5) {
     const n = hrPairs.length;
     const sumT = hrPairs.reduce((s, p) => s + p.t, 0);
@@ -207,11 +253,9 @@ export function analyzeRecentTrend(
     const sumTHR = hrPairs.reduce((s, p) => s + p.t * p.hr, 0);
     const denom = n * sumTT - sumT * sumT;
     hrSlope = denom !== 0 ? (n * sumTHR - sumT * sumHR) / denom : 0;
-    lastHR = hrPairs[hrPairs.length - 1].hr;
-    maxHR = Math.max(...hrPairs.map((p) => p.hr));
   }
 
-  // Record interval (median gap)
+  // Median record interval
   const gaps: number[] = [];
   for (let i = 1; i < window.length; i++) {
     const dt =
@@ -224,27 +268,54 @@ export function analyzeRecentTrend(
   const recordInterval = gaps.length > 0 ? gaps[Math.floor(gaps.length / 2)] : 1;
 
   return {
-    avgSpeed: avg(window.map((r) => r.speed)),
+    speed,
+    hr,
+    cadence,
+    vo,
+    gct,
+    gctBalance,
+    stride,
+    verticalRatio,
+    power,
+    altitude,
     hrSlope,
-    lastHR,
-    maxHR,
-    avgCadence: avg(window.map((r) => r.cadence)),
-    avgVO: avg(window.map((r) => r.verticalOscillation)),
-    avgGCT: avg(window.map((r) => r.groundContactTime)),
-    avgStrideLength: avg(window.map((r) => r.strideLength)),
-    avgVerticalRatio: avg(window.map((r) => r.verticalRatio)),
-    avgPower: avg(window.map((r) => r.power)),
-    lastAltitude: window[window.length - 1]?.altitude ?? 0,
     recordInterval,
+    avgSpeed: speed.mean,
+    lastHR: hr.last,
+    maxHR: hr.max,
+    avgCadence: cadence.mean,
+    avgVO: vo.mean,
+    avgGCT: gct.mean,
+    avgStrideLength: stride.mean,
+    avgVerticalRatio: verticalRatio.mean,
+    avgPower: power.mean,
+    lastAltitude: altitude.last,
   };
 }
 
-function gaussianJitter(mean: number, pct = 0.02): number {
-  // Box-Muller transform for gaussian noise
-  const u1 = Math.random();
+function gauss(): number {
+  // Box-Muller
+  const u1 = Math.max(1e-12, Math.random());
   const u2 = Math.random();
-  const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-  return mean + mean * pct * z;
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+/**
+ * Autocorrelated (AR(1)) noise generator. Alpha closer to 1 => smoother
+ * evolution. Preserves the mean and approximate stationary std `std`.
+ */
+function createAR1(mean: number, std: number, alpha: number, initial?: number) {
+  let value = initial ?? mean;
+  const innovationScale = std * Math.sqrt(Math.max(0, 1 - alpha * alpha));
+  return () => {
+    if (std <= 0) return mean;
+    value = mean + alpha * (value - mean) + gauss() * innovationScale;
+    return value;
+  };
+}
+
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v));
 }
 
 export function synthesizeRecords(params: {
@@ -268,70 +339,154 @@ export function synthesizeRecords(params: {
   // actual routes rather than cutting across buildings.
   const routeLine = path && path.length >= 2 ? path : waypoints;
 
-  let totalRouteDist = 0;
+  // Cumulative distance along the route so we can place records by distance.
+  const routeCum: number[] = [0];
   for (let i = 1; i < routeLine.length; i++) {
-    totalRouteDist += haversineDistance(
-      routeLine[i - 1][0], routeLine[i - 1][1],
-      routeLine[i][0], routeLine[i][1]
+    routeCum.push(
+      routeCum[i - 1] +
+        haversineDistance(
+          routeLine[i - 1][0], routeLine[i - 1][1],
+          routeLine[i][0], routeLine[i][1],
+        ),
     );
   }
+  const totalRouteDist = routeCum[routeCum.length - 1];
+  if (totalRouteDist <= 0) return [];
 
+  const positionAt = (d: number): [number, number] => {
+    if (d <= 0) return routeLine[0];
+    if (d >= totalRouteDist) return routeLine[routeLine.length - 1];
+    let lo = 0;
+    let hi = routeCum.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (routeCum[mid] <= d) lo = mid;
+      else hi = mid;
+    }
+    const span = routeCum[hi] - routeCum[lo] || 1;
+    const t = (d - routeCum[lo]) / span;
+    return [
+      routeLine[lo][0] + (routeLine[hi][0] - routeLine[lo][0]) * t,
+      routeLine[lo][1] + (routeLine[hi][1] - routeLine[lo][1]) * t,
+    ];
+  };
+
+  const dt = trend.recordInterval;
   const targetSpeed = totalRouteDist / extensionDuration;
-  const spacing = targetSpeed * trend.recordInterval;
-  const gpsPoints = interpolateAlongPolyline(routeLine, Math.max(spacing, 0.5));
+  const numRecords = Math.max(1, Math.round(extensionDuration / dt));
 
-  const numRecords = Math.min(
-    gpsPoints.length,
-    Math.ceil(extensionDuration / trend.recordInterval)
+  // Per-step pace deviation. If the recent window is unusually steady
+  // (treadmill, pacing target) fall back to a modest 5% of target so the
+  // extension still has believable micro-variation.
+  const paceStd = trend.speed.std > 0 ? trend.speed.std : targetSpeed * 0.05;
+  const paceDev = createAR1(0, paceStd, 0.95, 0);
+
+  // Seed each AR(1) at the last observed value to blend smoothly from the
+  // real data into the synthetic extension.
+  const hrNoise = createAR1(0, trend.hr.std, 0.92, 0);
+  const cadenceGen = createAR1(trend.cadence.mean, trend.cadence.std, 0.9, trend.cadence.last);
+  const voGen = createAR1(trend.vo.mean, trend.vo.std, 0.85, trend.vo.last);
+  const gctGen = createAR1(trend.gct.mean, trend.gct.std, 0.85, trend.gct.last);
+  const gctBalanceGen = createAR1(
+    trend.gctBalance.mean, trend.gctBalance.std, 0.9, trend.gctBalance.last,
   );
+  const strideGen = createAR1(trend.stride.mean, trend.stride.std, 0.88, trend.stride.last);
+  const vrGen = createAR1(
+    trend.verticalRatio.mean, trend.verticalRatio.std, 0.85, trend.verticalRatio.last,
+  );
+  const powerGen = createAR1(trend.power.mean, trend.power.std, 0.88, trend.power.last);
+  // Altitude: tiny drift around the last known value; real terrain is unknown.
+  const altStd = trend.altitude.std > 0 ? Math.min(trend.altitude.std, 1) : 0.2;
+  const altGen = createAR1(trend.altitude.last, altStd, 0.98, trend.altitude.last);
+
+  // First pass: noisy step distances, then scale so the total matches the route.
+  const stepDists: number[] = new Array(numRecords);
+  let rawSum = 0;
+  for (let i = 0; i < numRecords; i++) {
+    const s = Math.max(0.5, targetSpeed + paceDev());
+    stepDists[i] = s * dt;
+    rawSum += stepDists[i];
+  }
+  const scale = rawSum > 0 ? totalRouteDist / rawSum : 1;
+  for (let i = 0; i < numRecords; i++) stepDists[i] *= scale;
+
+  // Clamps: allow synthetic values to roam slightly beyond the observed range
+  // (real runs do too) but keep them in physiological bounds.
+  const pad = (stat: MetricStats, frac = 0.15): [number, number] => {
+    if (stat.count === 0) return [-Infinity, Infinity];
+    const range = Math.max(stat.max - stat.min, Math.abs(stat.mean) * frac, 1e-6);
+    return [stat.min - range * frac, stat.max + range * frac];
+  };
+  const [hrMin, hrMax] = trend.hr.count > 0
+    ? [Math.max(60, trend.hr.min - 8), Math.min(205, trend.hr.max + 8)]
+    : [60, 205];
+  const [cadMin, cadMax] = trend.cadence.count > 0
+    ? [Math.max(120, trend.cadence.min - 6), Math.min(230, trend.cadence.max + 6)]
+    : [120, 230];
+  const [voMin, voMax] = pad(trend.vo);
+  const [gctMin, gctMax] = pad(trend.gct);
+  const [gctBalMin, gctBalMax] = pad(trend.gctBalance, 0.05);
+  const [strideMin, strideMax] = pad(trend.stride);
+  const [vrMin, vrMax] = pad(trend.verticalRatio);
+  const [powerMin, powerMax] = pad(trend.power);
 
   const lastTime = new Date(last.timestamp).getTime();
-  const intervalMs = trend.recordInterval * 1000;
-  const hrCeiling = Math.min(200, trend.maxHR + 10);
+  const intervalMs = dt * 1000;
 
   const result: RecordPoint[] = [];
-  let cumulativeDistance = last.distance;
-
+  let cumDistance = 0;
   for (let i = 0; i < numRecords; i++) {
-    const gpsIdx = Math.min(i, gpsPoints.length - 1);
-    const [lat, lng] = gpsPoints[gpsIdx];
+    cumDistance += stepDists[i];
+    const [lat, lng] = positionAt(cumDistance);
 
-    // Distance from previous point
-    const prevLat = i === 0 ? (last.lat ?? lat) : result[i - 1].lat!;
-    const prevLng = i === 0 ? (last.lng ?? lng) : result[i - 1].lng!;
-    const stepDist = haversineDistance(prevLat, prevLng, lat, lng);
-    cumulativeDistance += stepDist;
-
-    const elapsed = last.elapsed + (i + 1) * trend.recordInterval;
+    const elapsed = last.elapsed + (i + 1) * dt;
     const timestamp = new Date(lastTime + (i + 1) * intervalMs).toISOString();
 
-    // HR: extrapolate from trend, clamp
-    const dt = (i + 1) * trend.recordInterval;
-    let hr = trend.lastHR > 0
-      ? trend.lastHR + trend.hrSlope * dt
-      : undefined;
-    if (hr != null) {
-      hr = Math.max(trend.lastHR - 10, Math.min(hrCeiling, hr));
-      hr = Math.round(gaussianJitter(hr, 0.01));
+    let hr: number | undefined;
+    if (trend.hr.count > 0) {
+      const drift = trend.hrSlope * (i + 1) * dt;
+      const base = trend.hr.last > 0 ? trend.hr.last : trend.hr.mean;
+      hr = Math.round(clamp(base + drift + hrNoise(), hrMin, hrMax));
     }
 
-    const speed = stepDist / trend.recordInterval;
+    const cadence = trend.cadence.count > 0
+      ? Math.round(clamp(cadenceGen(), cadMin, cadMax))
+      : undefined;
+    const vo = trend.vo.count > 0
+      ? +clamp(voGen(), voMin, voMax).toFixed(1)
+      : undefined;
+    const gctV = trend.gct.count > 0
+      ? +clamp(gctGen(), gctMin, gctMax).toFixed(1)
+      : undefined;
+    const gctBal = trend.gctBalance.count > 0
+      ? +clamp(gctBalanceGen(), gctBalMin, gctBalMax).toFixed(2)
+      : undefined;
+    const strideV = trend.stride.count > 0
+      ? Math.round(clamp(strideGen(), strideMin, strideMax))
+      : undefined;
+    const vr = trend.verticalRatio.count > 0
+      ? +clamp(vrGen(), vrMin, vrMax).toFixed(2)
+      : undefined;
+    const powerV = trend.power.count > 0
+      ? Math.round(clamp(powerGen(), powerMin, powerMax))
+      : undefined;
 
     result.push({
       timestamp,
       elapsed,
-      distance: Math.round(cumulativeDistance * 100) / 100,
-      altitude: trend.lastAltitude,
+      distance: Math.round((last.distance + cumDistance) * 100) / 100,
+      altitude: trend.altitude.count > 0 ? +altGen().toFixed(1) : undefined,
       lat,
       lng,
       heartRate: hr,
-      cadence: trend.avgCadence > 0 ? Math.round(gaussianJitter(trend.avgCadence)) : undefined,
-      speed: Math.round(speed * 1000) / 1000,
-      verticalOscillation: trend.avgVO > 0 ? +gaussianJitter(trend.avgVO).toFixed(1) : undefined,
-      groundContactTime: trend.avgGCT > 0 ? +gaussianJitter(trend.avgGCT).toFixed(1) : undefined,
-      strideLength: trend.avgStrideLength > 0 ? +gaussianJitter(trend.avgStrideLength).toFixed(0) : undefined,
-      verticalRatio: trend.avgVerticalRatio > 0 ? +gaussianJitter(trend.avgVerticalRatio).toFixed(2) : undefined,
-      power: trend.avgPower > 0 ? Math.round(gaussianJitter(trend.avgPower)) : undefined,
+      cadence,
+      speed: Math.round((stepDists[i] / dt) * 1000) / 1000,
+      verticalOscillation: vo,
+      groundContactTime: gctV,
+      groundContactTimeBalance: gctBal,
+      strideLength: strideV,
+      verticalRatio: vr,
+      power: powerV,
       lapIndex: last.lapIndex + 1,
     });
   }
