@@ -144,9 +144,11 @@ function App() {
       }
 
       setActivities((prev) => {
-        const existingNames = new Set(prev.map((a) => a.fileName));
-        const newOnes = parsed.filter((a) => !existingNames.has(a.fileName));
-        return [...prev, ...newOnes];
+        // Re-dropping an existing file replaces it so parser improvements
+        // take effect without an explicit re-parse step.
+        const byName = new Map(prev.map((a) => [a.fileName, a]));
+        for (const a of parsed) byName.set(a.fileName, a);
+        return Array.from(byName.values());
       });
       setLoading(false);
 

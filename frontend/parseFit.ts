@@ -19,6 +19,45 @@ function formatTime(seconds: number): string {
   return `${min}:${sec.toString().padStart(2, "0")}`;
 }
 
+function avgOf(vals: (number | undefined)[]): number | undefined {
+  const valid = vals.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  return valid.length > 0 ? valid.reduce((s, v) => s + v, 0) / valid.length : undefined;
+}
+
+function maxOf(vals: (number | undefined)[]): number | undefined {
+  const valid = vals.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  return valid.length > 0 ? Math.max(...valid) : undefined;
+}
+
+/**
+ * Fill in lap summaries that the FIT producer didn't populate (e.g. Apple
+ * Watch on structured workouts omits HR/cadence on lap messages). Each
+ * aggregate is computed from records whose lapIndex matches.
+ */
+function backfillLapAggregates(laps: LapSummary[], records: RecordPoint[]): void {
+  if (laps.length === 0 || records.length === 0) return;
+  const byLap = new Map<number, RecordPoint[]>();
+  for (const r of records) {
+    const arr = byLap.get(r.lapIndex);
+    if (arr) arr.push(r);
+    else byLap.set(r.lapIndex, [r]);
+  }
+  for (const lap of laps) {
+    const rs = byLap.get(lap.lapIndex);
+    if (!rs || rs.length === 0) continue;
+    if (lap.avgHeartRate == null) lap.avgHeartRate = avgOf(rs.map((r) => r.heartRate));
+    if (lap.maxHeartRate == null) lap.maxHeartRate = maxOf(rs.map((r) => r.heartRate));
+    if (lap.avgCadence == null) lap.avgCadence = avgOf(rs.map((r) => r.cadence));
+    if (lap.avgVerticalOscillation == null)
+      lap.avgVerticalOscillation = avgOf(rs.map((r) => r.verticalOscillation));
+    if (lap.avgGroundContactTime == null)
+      lap.avgGroundContactTime = avgOf(rs.map((r) => r.groundContactTime));
+    if (lap.avgStrideLength == null) lap.avgStrideLength = avgOf(rs.map((r) => r.strideLength));
+    if (lap.avgVerticalRatio == null) lap.avgVerticalRatio = avgOf(rs.map((r) => r.verticalRatio));
+    if (lap.avgPower == null) lap.avgPower = avgOf(rs.map((r) => r.power));
+  }
+}
+
 let idCounter = 0;
 
 export async function parseFitFile(
@@ -126,6 +165,11 @@ export async function parseFitFile(
       });
     }
   }
+
+  // Apple Watch's FIT export for custom/structured workouts omits HR and
+  // some other per-lap aggregates, even though records still carry the
+  // raw samples. Backfill missing lap stats from the matching records.
+  backfillLapAggregates(laps, records);
 
   const session = data.activity?.sessions?.[0];
 
