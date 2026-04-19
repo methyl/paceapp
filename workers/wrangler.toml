@@ -31,7 +31,7 @@ DEV_RETURN_MAGIC_LINK = "false"
 [[d1_databases]]
 binding = "DB"
 database_name = "paceapp"
-database_id = "PLACEHOLDER_REPLACE_AFTER_WRANGLER_D1_CREATE"
+database_id = "5a4bd2b8-51f1-45f7-8cb6-dc5de0c00daa"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
