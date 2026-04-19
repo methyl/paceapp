@@ -27,17 +27,25 @@ export async function sendMagicLinkEmail(
       Expires in 15 minutes. If you did not request this, ignore this email.
     </p>`;
 
+  const message = {
+    to: email,
+    from: { email: env.MAGIC_FROM, name: env.MAGIC_FROM_NAME || "PaceApp" },
+    subject,
+    text,
+    html,
+  };
   try {
-    await env.EMAIL.send({
-      to: email,
-      from: { email: env.MAGIC_FROM, name: env.MAGIC_FROM_NAME || "PaceApp" },
-      subject,
-      text,
-      html,
+    const res = await env.EMAIL_SVC.fetch("https://paceapp-email/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(message),
     });
+    if (!res.ok) {
+      throw new Error(`email worker returned ${res.status}: ${await res.text()}`);
+    }
   } catch (e) {
     // In local dev without a configured sender, log the link instead of failing.
-    console.error("EMAIL.send failed:", e);
+    console.error("EMAIL_SVC.fetch failed:", e);
     console.log(`[dev magic link for ${email}] ${link}`);
     throw e;
   }

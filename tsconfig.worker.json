@@ -16,5 +16,9 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["workers/src/**/*.ts", "functions/**/*.ts"]
+  "include": [
+    "workers/src/**/*.ts",
+    "workers/email/src/**/*.ts",
+    "functions/**/*.ts"
+  ]
 }

@@ -1,0 +1,7 @@
+name = "paceapp-email"
+main = "src/index.ts"
+compatibility_date = "2025-01-15"
+workers_dev = false
+
+[[send_email]]
+name = "EMAIL"
