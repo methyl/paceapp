@@ -319,6 +319,86 @@ describe("synthesizeRecords", () => {
     expect(powerMean).toBeGreaterThan(225); // race ~240, slow ~197
   });
 
+  it("synth step-to-step jumps match source smoothness, not white noise", () => {
+    // Real running dynamics are heavily autocorrelated at 1Hz — stride /
+    // vertical ratio / power change by small amounts between adjacent
+    // samples, not by the full stationary std. A fixed low AR(1) alpha
+    // (~0.88) ignored that and produced an extension whose record-to-record
+    // jumps were several times larger than the source — visible as a noisy
+    // tail next to a smooth start on the time-series dynamics charts.
+    //
+    // Build a source with tight second-to-second smoothness (AR(1) with high
+    // alpha) and assert the synth doesn't blow past that jump size.
+    const base = new Date("2026-04-01T10:00:00Z").getTime();
+    const records: RecordPoint[] = [];
+    // Ornstein–Uhlenbeck-style smooth process for stride, power, VR so lag-1
+    // correlation is ~0.99 like real sensor data.
+    const smooth = (mean: number, drift: number) => {
+      let v = mean;
+      return () => {
+        v = 0.99 * v + 0.01 * mean + (Math.random() - 0.5) * drift;
+        return v;
+      };
+    };
+    const strideGen = smooth(1200, 4);
+    const powerGen = smooth(240, 4);
+    const vrGen = smooth(8, 0.1);
+    let dist = 0;
+    for (let i = 0; i < 1800; i++) {
+      dist += 3.5;
+      records.push({
+        timestamp: new Date(base + i * 1000).toISOString(),
+        elapsed: i,
+        distance: dist,
+        altitude: 100,
+        lat: 51 + i * 1e-5,
+        lng: 17,
+        heartRate: 150,
+        cadence: 172,
+        speed: 3.5,
+        verticalOscillation: 90,
+        groundContactTime: 250,
+        strideLength: strideGen(),
+        verticalRatio: vrGen(),
+        power: powerGen(),
+        lapIndex: 1,
+      });
+    }
+    const lastReal = records[records.length - 1];
+
+    const synthetic = synthesizeRecords({
+      existingRecords: records,
+      waypoints: [
+        [lastReal.lat!, lastReal.lng!],
+        [lastReal.lat! + (3.5 * 600) / 111_000, lastReal.lng!],
+      ],
+      totalFinishTimeSeconds: lastReal.elapsed + 600,
+    });
+
+    const avgJump = (vals: (number | undefined)[]): number => {
+      const v = vals.filter((x): x is number => x != null);
+      if (v.length < 2) return 0;
+      let s = 0;
+      for (let i = 1; i < v.length; i++) s += Math.abs(v[i] - v[i - 1]);
+      return s / (v.length - 1);
+    };
+
+    // Source record-to-record mean absolute jump.
+    const srcStride = avgJump(records.map((r) => r.strideLength));
+    const srcPower = avgJump(records.map((r) => r.power));
+    const srcVR = avgJump(records.map((r) => r.verticalRatio));
+
+    const synStride = avgJump(synthetic.map((r) => r.strideLength));
+    const synPower = avgJump(synthetic.map((r) => r.power));
+    const synVR = avgJump(synthetic.map((r) => r.verticalRatio));
+
+    // Synth should be within ~3x the source's jump size. Before the alpha
+    // fix this ratio was closer to 10x for high-autocorrelation sources.
+    expect(synStride).toBeLessThan(srcStride * 3);
+    expect(synPower).toBeLessThan(srcPower * 3);
+    expect(synVR).toBeLessThan(srcVR * 3);
+  });
+
   it("synthetic HR blends smoothly from last real HR (no jump)", () => {
     const existing = makeRecords(300);
     const lastReal = existing[existing.length - 1];
