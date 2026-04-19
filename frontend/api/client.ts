@@ -102,6 +102,9 @@ export const api = {
   downloadActivityJson<T = unknown>(id: string): Promise<T> {
     return request<T>(`/activities/${id}/json`);
   },
+  deleteActivity(id: string): Promise<{ ok: true }> {
+    return request(`/activities/${id}`, { method: "DELETE" });
+  },
   listTokens(): Promise<{ tokens: TokenSummary[] }> {
     return request("/tokens");
   },

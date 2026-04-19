@@ -6,6 +6,7 @@ import MiniRouteMap from "./MiniRouteMap";
 interface ActivityListProps {
   activities: ParsedActivity[];
   onSelect: (activity: ParsedActivity) => void;
+  onDelete?: (activity: ParsedActivity) => void;
   filterType: WorkoutType | "all";
   onFilterChange: (type: WorkoutType | "all") => void;
 }
@@ -24,6 +25,7 @@ function WorkoutBadge({ type }: { type: WorkoutType }) {
 export default function ActivityList({
   activities,
   onSelect,
+  onDelete,
   filterType,
   onFilterChange,
 }: ActivityListProps) {
@@ -86,8 +88,20 @@ export default function ActivityList({
           <div
             key={a.id}
             onClick={() => onSelect(a)}
-            className="bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
+            className="group bg-white rounded-lg border border-gray-200 overflow-hidden cursor-pointer hover:shadow-md transition-shadow relative"
           >
+            {onDelete && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (confirm(`Delete "${a.fileName}"?`)) onDelete(a);
+                }}
+                className="absolute top-2 right-2 z-10 w-6 h-6 rounded-full bg-white/90 text-gray-500 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity text-sm leading-none border border-gray-200"
+                aria-label="Delete activity"
+              >
+                ×
+              </button>
+            )}
             <MiniRouteMap
               records={a.records}
               color={WORKOUT_COLORS[a.workoutType]}

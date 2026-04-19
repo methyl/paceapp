@@ -54,6 +54,17 @@ export async function saveActivities(activities: ParsedActivity[]): Promise<void
   });
 }
 
+export async function deleteActivity(fileName: string): Promise<void> {
+  const db = await openDB();
+  const tx = db.transaction([STORE_NAME, BLOB_STORE], "readwrite");
+  tx.objectStore(STORE_NAME).delete(fileName);
+  tx.objectStore(BLOB_STORE).delete(fileName);
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 export async function clearActivities(): Promise<void> {
   const db = await openDB();
   const tx = db.transaction([STORE_NAME, BLOB_STORE], "readwrite");

@@ -14,7 +14,14 @@ import LibraryMap from "./components/LibraryMap";
 import RunExtension from "./components/RunExtension";
 import { useSnappedRoute } from "./routing";
 import { parseFitFile, reprocessActivity } from "./parseFit";
-import { loadActivities, saveActivities, clearActivities, saveFitBlob } from "./storage";
+import {
+  loadActivities,
+  saveActivities,
+  clearActivities,
+  saveFitBlob,
+  deleteActivity as deleteActivityFromStorage,
+} from "./storage";
+import { api } from "./api/client";
 import { exportActivityToFit, downloadFitFile } from "./exportFit";
 import { getZ2Ceiling, setZ2Ceiling } from "./detectWorkout";
 import type { ParsedActivity, WorkoutType } from "./types";
@@ -161,6 +168,26 @@ function App() {
     setView("library");
     await clearActivities().catch(() => {});
   }, []);
+
+  const handleDelete = useCallback(
+    async (activity: ParsedActivity) => {
+      const remoteMatch = (sync.remote ?? []).find((r) => r.fileName === activity.fileName);
+      if (remoteMatch) {
+        try {
+          await api.deleteActivity(remoteMatch.id);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "failed to delete from cloud";
+          if (!confirm(`Cloud delete failed: ${msg}\nRemove locally anyway?`)) return;
+        }
+      }
+      await deleteActivityFromStorage(activity.fileName).catch(() => {});
+      setActivities((prev) => prev.filter((a) => a.fileName !== activity.fileName));
+      setSelected((s) => (s?.fileName === activity.fileName ? null : s));
+      if (selected?.fileName === activity.fileName) setView("library");
+      sync.refresh();
+    },
+    [sync, selected],
+  );
 
   const handleSelectActivity = (a: ParsedActivity) => {
     setSelected(a);
@@ -375,6 +402,7 @@ function App() {
             <ActivityList
               activities={runningActivities}
               onSelect={handleSelectActivity}
+              onDelete={handleDelete}
               filterType={filterType}
               onFilterChange={setFilterType}
             />
@@ -431,6 +459,16 @@ function App() {
                 className="text-sm text-gray-600 hover:text-gray-800 font-medium"
               >
                 Export FIT
+              </button>
+              <button
+                onClick={() => {
+                  if (selected && confirm(`Delete "${selected.fileName}"? This removes it locally${sync.remote?.some((r) => r.fileName === selected.fileName) ? " and from the cloud" : ""}.`)) {
+                    handleDelete(selected);
+                  }
+                }}
+                className="text-sm text-red-600 hover:text-red-800 font-medium"
+              >
+                Delete
               </button>
             </div>
             {selected.segmentsDetected && (
