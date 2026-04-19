@@ -34,9 +34,9 @@ function App() {
   const [z2, setZ2] = useState(getZ2Ceiling);
   const [extensionWaypoints, setExtensionWaypoints] = useState<[number, number][]>([]);
   const [extensionMode, setExtensionMode] = useState(false);
-  const snappedExtension = useSnappedRoute(
-    extensionMode ? extensionWaypoints : [],
-  );
+  // Keep the snapped route computed whenever waypoints exist (drawing OR preview)
+  // so handleConfirm() can pass it into synthesizeRecords.
+  const snappedExtension = useSnappedRoute(extensionWaypoints);
   const [timeRange, setTimeRange] = useState<string>("all");
 
   const isRunning = (a: ParsedActivity) =>
