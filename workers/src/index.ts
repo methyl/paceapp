@@ -3,9 +3,19 @@ import { corsHeaders, error, withCors } from "./http";
 import {
   requestMagicLink,
   verifyMagicLink,
+  verifyMagicLinkGet,
   logout,
   me,
 } from "./routes/authRoutes";
+import {
+  discovery,
+  protectedResource,
+  register as oauthRegister,
+  authorizeGet,
+  authorizePost,
+  signin as oauthSignin,
+  token as oauthToken,
+} from "./routes/oauthRoutes";
 import {
   listActivities,
   uploadActivity,
@@ -41,8 +51,19 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
 
   if (pathname === "/api/auth/request" && method === "POST") return requestMagicLink(req, env);
   if (pathname === "/api/auth/verify" && method === "POST") return verifyMagicLink(req, env);
+  if (pathname === "/api/auth/verify" && method === "GET") return verifyMagicLinkGet(req, env);
   if (pathname === "/api/auth/logout" && method === "POST") return logout(req, env);
   if (pathname === "/api/auth/me" && method === "GET") return me(req, env);
+
+  if (pathname === "/.well-known/oauth-authorization-server" && method === "GET")
+    return discovery(req, env);
+  if (pathname === "/.well-known/oauth-protected-resource" && method === "GET")
+    return protectedResource(req, env);
+  if (pathname === "/oauth/register" && method === "POST") return oauthRegister(req, env);
+  if (pathname === "/oauth/authorize" && method === "GET") return authorizeGet(req, env);
+  if (pathname === "/oauth/authorize" && method === "POST") return authorizePost(req, env);
+  if (pathname === "/oauth/signin" && method === "POST") return oauthSignin(req, env);
+  if (pathname === "/oauth/token" && method === "POST") return oauthToken(req, env);
 
   if (pathname === "/api/activities" && method === "GET") return listActivities(req, env);
   if (pathname === "/api/activities" && method === "POST") return uploadActivity(req, env);

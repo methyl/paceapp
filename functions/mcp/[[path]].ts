@@ -1,5 +1,6 @@
 import type { Env } from "../../workers/src/env";
 import { getUserFromBearer } from "../../workers/src/routes/tokenRoutes";
+import { getUserFromOAuthBearer } from "../../workers/src/routes/oauthRoutes";
 import { TOOL_DEFINITIONS, callTool } from "../../workers/src/mcp/tools";
 
 // Minimal MCP streamable-HTTP transport: POST /mcp → JSON-RPC response.
@@ -29,11 +30,21 @@ export const onRequest: PagesFunction<Env> = async (ctx) => {
     return new Response("method not allowed", { status: 405 });
   }
 
-  const user = await getUserFromBearer(request, env);
+  const user =
+    (await getUserFromBearer(request, env)) ||
+    (await getUserFromOAuthBearer(request, env));
   if (!user) {
+    const base = env.APP_URL.replace(/\/+$/, "");
     return new Response(
       JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "unauthorized" } }),
-      { status: 401, headers: { "content-type": "application/json" } },
+      {
+        status: 401,
+        headers: {
+          "content-type": "application/json",
+          // RFC 9728 hint so OAuth-aware clients discover the authorization server.
+          "www-authenticate": `Bearer realm="paceapp", resource_metadata="${base}/.well-known/oauth-protected-resource"`,
+        },
+      },
     );
   }
 
