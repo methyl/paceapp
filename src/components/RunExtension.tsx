@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import type { ParsedActivity } from "../types";
-import { haversineDistance, synthesizeRecords } from "../synthesizeExtension";
+import { buildExtensionLaps, haversineDistance, synthesizeRecords } from "../synthesizeExtension";
 import { speedToPace, formatTime } from "../parseFit";
 import type { SnappedRoute } from "../routing";
 
@@ -174,11 +174,14 @@ export default function RunExtension({
 
     const mergedRecords = [...activity.records, ...synthetic];
     const lastMerged = mergedRecords[mergedRecords.length - 1];
+    const extensionLaps = buildExtensionLaps(synthetic, activity.laps);
 
     const extended: ParsedActivity = {
       ...activity,
       records: mergedRecords,
+      laps: [...activity.laps, ...extensionLaps],
       originalRecordCount: activity.records.length,
+      originalLapCount: activity.laps.length,
       extended: true,
       summary: {
         ...activity.summary,
@@ -204,18 +207,80 @@ export default function RunExtension({
     setError("");
   };
 
-  // Already extended — show undo
+  // Already extended — offer recalculate (re-run the newer synthesis with
+  // the original finish time, using the existing synthetic GPS trace as
+  // the route) and undo.
   if (activity.extended) {
+    const origRecCount = activity.originalRecordCount ?? activity.records.length;
+    const origLapCount = activity.originalLapCount ?? activity.laps.length;
+    const originalRecs = activity.records.slice(0, origRecCount);
+    const syntheticOld = activity.records.slice(origRecCount);
+
+    const handleRecalculate = () => {
+      if (syntheticOld.length < 2 || originalRecs.length === 0) return;
+      const route = syntheticOld
+        .filter((r) => r.lat != null && r.lng != null)
+        .map((r) => [r.lat!, r.lng!] as [number, number]);
+      if (route.length < 2) return;
+
+      const lastOrig = originalRecs[originalRecs.length - 1];
+      const lastSynth = syntheticOld[syntheticOld.length - 1];
+      const finishTime = lastSynth.elapsed;
+      if (finishTime <= lastOrig.elapsed) return;
+
+      const newSynth = synthesizeRecords({
+        existingRecords: originalRecs,
+        waypoints: [route[0], route[route.length - 1]],
+        totalFinishTimeSeconds: finishTime,
+        path: route,
+      });
+      if (newSynth.length === 0) return;
+
+      const baseLaps = activity.laps.slice(0, origLapCount);
+      const extensionLaps = buildExtensionLaps(newSynth, baseLaps);
+      const mergedRecords = [...originalRecs, ...newSynth];
+      const lastMerged = mergedRecords[mergedRecords.length - 1];
+
+      const reExtended: ParsedActivity = {
+        ...activity,
+        records: mergedRecords,
+        laps: [...baseLaps, ...extensionLaps],
+        originalRecordCount: originalRecs.length,
+        originalLapCount: baseLaps.length,
+        extended: true,
+        summary: {
+          ...activity.summary,
+          totalDistance: lastMerged.distance,
+          totalElapsedTime: lastMerged.elapsed,
+          avgSpeed: lastMerged.distance / lastMerged.elapsed,
+          avgPace: speedToPace(lastMerged.distance / lastMerged.elapsed),
+        },
+      };
+      onExtend(reExtended);
+    };
+
     return (
       <div className="flex items-center gap-2 text-sm">
         <span className="text-amber-600 font-medium">Extended activity</span>
+        <button
+          onClick={handleRecalculate}
+          disabled={syntheticOld.length < 2}
+          className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Recalculate
+        </button>
         <button
           onClick={() => {
             const original: ParsedActivity = {
               ...activity,
               records: activity.records.slice(0, activity.originalRecordCount),
+              laps:
+                activity.originalLapCount != null
+                  ? activity.laps.slice(0, activity.originalLapCount)
+                  : activity.laps,
               extended: false,
               originalRecordCount: undefined,
+              originalLapCount: undefined,
             };
             onUndo(original);
           }}

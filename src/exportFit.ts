@@ -1,5 +1,6 @@
 import { Encoder } from "@garmin/fitsdk";
-import type { ParsedActivity, LapSummary, RecordPoint } from "./types";
+import type { ParsedActivity, RecordPoint } from "./types";
+import { detectAutoLapDistance, splitRecordsByDistance } from "./synthesizeExtension";
 
 /**
  * FIT message numbers from the FIT SDK profile.
@@ -100,6 +101,7 @@ function exportWithRawMessages(
     encoder.writeMesg({ mesgNum: MESG.record, ...recordToFitMesg(r) });
   }
 
+  const origLapCount = activity.originalLapCount ?? raw.lapMesgs?.length ?? activity.laps.length;
   let numLaps = activity.laps.length;
 
   // Write laps — use raw if not extended, otherwise rebuild
@@ -112,12 +114,15 @@ function exportWithRawMessages(
     const extRecords = activity.records.slice(activity.originalRecordCount ?? 0);
     if (extRecords.length > 0) {
       const sampleLap = raw.lapMesgs[raw.lapMesgs.length - 1] as Record<string, unknown> | undefined;
-      const autoLapDist = detectAutoLapDistance(activity.laps);
+      // Detect auto-lap from the original laps only (the extension's own
+      // laps may have been appended to activity.laps by the in-app extender).
+      const origLaps = activity.laps.slice(0, origLapCount);
+      const autoLapDist = detectAutoLapDistance(origLaps);
       const chunks = autoLapDist
         ? splitRecordsByDistance(extRecords, autoLapDist)
         : [extRecords];
 
-      let idx = activity.laps.length;
+      let idx = origLapCount;
       for (const chunk of chunks) {
         if (chunk.length < 2) continue;
         encoder.writeMesg({
@@ -221,53 +226,6 @@ function exportMinimal(encoder: Encoder, activity: ParsedActivity): Uint8Array {
   });
 
   return encoder.close();
-}
-
-/**
- * Detect whether the original activity used auto-lap at a uniform distance
- * (typical: 1000m or 1609.34m). Returns the lap distance if detected,
- * otherwise null — in which case we emit one lap for the whole extension.
- */
-function detectAutoLapDistance(laps: LapSummary[]): number | null {
-  if (laps.length < 2) return null;
-  // Ignore the final lap — usually a partial trailing lap.
-  const full = laps.slice(0, -1);
-  if (full.length < 2) return null;
-  const distances = full.map((l) => l.totalDistance).filter((d) => d > 0);
-  if (distances.length < 2) return null;
-  const mean = distances.reduce((s, d) => s + d, 0) / distances.length;
-  if (mean < 400) return null;
-  const maxDev = Math.max(...distances.map((d) => Math.abs(d - mean)));
-  // Accept if every full lap is within ~3% of the mean — that's auto-lap.
-  if (maxDev / mean < 0.03) return mean;
-  return null;
-}
-
-/**
- * Split a run of records into chunks whose cumulative distance equals
- * `chunkDist`. The final chunk may be shorter (partial lap).
- */
-function splitRecordsByDistance(
-  records: RecordPoint[],
-  chunkDist: number,
-): RecordPoint[][] {
-  if (records.length === 0 || chunkDist <= 0) return [records];
-  const chunks: RecordPoint[][] = [];
-  const startDist = records[0].distance;
-  let chunkStart = 0;
-  let nextBoundary = startDist + chunkDist;
-
-  for (let i = 1; i < records.length; i++) {
-    if (records[i].distance >= nextBoundary) {
-      chunks.push(records.slice(chunkStart, i + 1));
-      chunkStart = i;
-      nextBoundary = records[i].distance + chunkDist;
-    }
-  }
-  if (chunkStart < records.length - 1) {
-    chunks.push(records.slice(chunkStart));
-  }
-  return chunks.length > 0 ? chunks : [records];
 }
 
 function buildExtensionLapMesg(

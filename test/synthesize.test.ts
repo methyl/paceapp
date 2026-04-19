@@ -146,4 +146,121 @@ describe("synthesizeRecords", () => {
       }
     }
   });
+
+  it("synthetic cadence variability is in the same ballpark as source", () => {
+    // Source has cadence ~170-174 (mean 172, std ~1.15).
+    const existing = makeRecords(600);
+    const lastReal = existing[existing.length - 1];
+    const waypoints: [number, number][] = [
+      [lastReal.lat! + 0.001, lastReal.lng!],
+      [lastReal.lat! + 0.02, lastReal.lng!],
+    ];
+
+    const synthetic = synthesizeRecords({
+      existingRecords: existing,
+      waypoints,
+      totalFinishTimeSeconds: lastReal.elapsed + 900,
+    });
+
+    const cadences = synthetic
+      .map((r) => r.cadence)
+      .filter((c): c is number => c != null);
+    expect(cadences.length).toBeGreaterThan(50);
+
+    const mean = cadences.reduce((s, x) => s + x, 0) / cadences.length;
+    const std = Math.sqrt(
+      cadences.reduce((s, x) => s + (x - mean) ** 2, 0) / cadences.length,
+    );
+
+    // Mean should stay within the source's operating range
+    expect(mean).toBeGreaterThan(168);
+    expect(mean).toBeLessThan(176);
+    // And we should see real variability — not a locked-in flat line
+    expect(std).toBeGreaterThan(0.3);
+  });
+
+  it("uses actual per-metric std so synthetic VO varies with source", () => {
+    // Build two sources: one with tight VO variance, one wide.
+    const mkSource = (voJitter: number): RecordPoint[] => {
+      const base = new Date("2026-04-01T10:00:00Z").getTime();
+      const recs: RecordPoint[] = [];
+      for (let i = 0; i < 600; i++) {
+        recs.push({
+          timestamp: new Date(base + i * 1000).toISOString(),
+          elapsed: i,
+          distance: i * 3,
+          altitude: 100,
+          lat: 51 + i * 1e-5,
+          lng: 17,
+          heartRate: 150,
+          cadence: 172,
+          speed: 3,
+          verticalOscillation: 90 + (Math.random() - 0.5) * voJitter,
+          groundContactTime: 250,
+          strideLength: 1100,
+          verticalRatio: 8,
+          power: 240,
+          lapIndex: 1,
+        });
+      }
+      return recs;
+    };
+
+    const tight = synthesizeRecords({
+      existingRecords: mkSource(0.5),
+      waypoints: [[51.01, 17], [51.03, 17]],
+      totalFinishTimeSeconds: 600 + 600,
+    });
+    const wide = synthesizeRecords({
+      existingRecords: mkSource(15),
+      waypoints: [[51.01, 17], [51.03, 17]],
+      totalFinishTimeSeconds: 600 + 600,
+    });
+
+    const voStd = (recs: RecordPoint[]) => {
+      const v = recs.map((r) => r.verticalOscillation!).filter((x) => x != null);
+      const m = v.reduce((s, x) => s + x, 0) / v.length;
+      return Math.sqrt(v.reduce((s, x) => s + (x - m) ** 2, 0) / v.length);
+    };
+
+    expect(voStd(wide)).toBeGreaterThan(voStd(tight) * 2);
+  });
+
+  it("extension cumulative distance matches the waypoint route", () => {
+    const existing = makeRecords(300);
+    const lastReal = existing[existing.length - 1];
+    const waypoints: [number, number][] = [
+      [lastReal.lat! + 0.001, lastReal.lng!],
+      [lastReal.lat! + 0.01, lastReal.lng!],
+    ];
+    const synthetic = synthesizeRecords({
+      existingRecords: existing,
+      waypoints,
+      totalFinishTimeSeconds: lastReal.elapsed + 300,
+    });
+
+    const lastSyn = synthetic[synthetic.length - 1];
+    const extDist = lastSyn.distance - lastReal.distance;
+    // Expect to cover roughly the route distance (~1.11km). Tolerance for
+    // great-circle rounding.
+    expect(extDist).toBeGreaterThan(900);
+    expect(extDist).toBeLessThan(1400);
+  });
+
+  it("synthetic HR blends smoothly from last real HR (no jump)", () => {
+    const existing = makeRecords(300);
+    const lastReal = existing[existing.length - 1];
+    const waypoints: [number, number][] = [
+      [lastReal.lat! + 0.001, lastReal.lng!],
+      [lastReal.lat! + 0.005, lastReal.lng!],
+    ];
+    const synthetic = synthesizeRecords({
+      existingRecords: existing,
+      waypoints,
+      totalFinishTimeSeconds: lastReal.elapsed + 200,
+    });
+    const firstSynHR = synthetic[0].heartRate!;
+    // First synthetic HR should be within ~8 bpm of the last real HR.
+    expect(Math.abs(firstSynHR - lastReal.heartRate!)).toBeLessThan(8);
+  });
 });

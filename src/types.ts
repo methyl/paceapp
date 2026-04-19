@@ -95,6 +95,8 @@ export interface ParsedActivity {
   records: RecordPoint[];
   /** Number of original records before extension. Records beyond this are synthetic. */
   originalRecordCount?: number;
+  /** Number of original laps before extension. Laps beyond this are synthetic. */
+  originalLapCount?: number;
   /** Whether this activity has been extended with synthetic data */
   extended?: boolean;
   /** Raw decoded FIT messages for faithful re-export */
