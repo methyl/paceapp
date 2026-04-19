@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { RemoteUser } from "../api/client";
+import McpAccessModal from "./McpAccessModal";
 
 interface Props {
   user: RemoteUser | null;
@@ -14,20 +15,30 @@ export default function AuthBar({ user, loading, onRequestLink, onLogout }: Prop
   const [sent, setSent] = useState(false);
   const [err, setErr] = useState("");
   const [devLink, setDevLink] = useState<string | null>(null);
+  const [mcpOpen, setMcpOpen] = useState(false);
 
   if (loading) return <span className="text-xs text-gray-400">…</span>;
 
   if (user) {
     return (
-      <div className="flex items-center gap-2 text-xs">
-        <span className="text-gray-600">{user.email}</span>
-        <button
-          onClick={onLogout}
-          className="text-gray-500 hover:text-gray-800 underline"
-        >
-          sign out
-        </button>
-      </div>
+      <>
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-gray-600">{user.email}</span>
+          <button
+            onClick={() => setMcpOpen(true)}
+            className="text-gray-500 hover:text-gray-800 underline"
+          >
+            MCP
+          </button>
+          <button
+            onClick={onLogout}
+            className="text-gray-500 hover:text-gray-800 underline"
+          >
+            sign out
+          </button>
+        </div>
+        <McpAccessModal open={mcpOpen} onClose={() => setMcpOpen(false)} />
+      </>
     );
   }
 

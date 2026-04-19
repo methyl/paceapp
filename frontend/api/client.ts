@@ -20,6 +20,22 @@ export interface RemoteActivitySummary {
   uploadedAt: number;
 }
 
+export interface TokenSummary {
+  id: string;
+  label: string | null;
+  prefix: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
+export interface CreatedToken {
+  id: string;
+  token: string;
+  label: string | null;
+  prefix: string;
+  createdAt: number;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
@@ -85,5 +101,14 @@ export const api = {
   },
   downloadActivityJson<T = unknown>(id: string): Promise<T> {
     return request<T>(`/activities/${id}/json`);
+  },
+  listTokens(): Promise<{ tokens: TokenSummary[] }> {
+    return request("/tokens");
+  },
+  createToken(label: string): Promise<CreatedToken> {
+    return request("/tokens", { method: "POST", body: JSON.stringify({ label }) });
+  },
+  revokeToken(id: string): Promise<{ ok: true }> {
+    return request(`/tokens/${id}`, { method: "DELETE" });
   },
 };

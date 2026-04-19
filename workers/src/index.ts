@@ -13,6 +13,7 @@ import {
   downloadActivityJson,
   deleteActivity,
 } from "./routes/activityRoutes";
+import { listTokens, createToken, revokeToken } from "./routes/tokenRoutes";
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -53,6 +54,11 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     if (method === "GET" && sub === "/fit") return downloadActivityFit(req, env, id);
     if (method === "GET" && sub === "/json") return downloadActivityJson(req, env, id);
   }
+
+  if (pathname === "/api/tokens" && method === "GET") return listTokens(req, env);
+  if (pathname === "/api/tokens" && method === "POST") return createToken(req, env);
+  const tokenMatch = pathname.match(/^\/api\/tokens\/([a-zA-Z0-9-]+)$/);
+  if (tokenMatch && method === "DELETE") return revokeToken(req, env, tokenMatch[1]);
 
   return error(404, "not found");
 }
