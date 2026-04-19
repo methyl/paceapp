@@ -63,9 +63,13 @@ function recordToFitMesg(r: RecordPoint): Record<string, unknown> {
   }
   if (r.heartRate != null) mesg.heartRate = r.heartRate;
   if (r.cadence != null) {
-    // FIT stores half-cadence for running
-    mesg.cadence = Math.round(r.cadence / 2);
-    mesg.fractionalCadence = (r.cadence / 2) % 1;
+    // FIT stores half-cadence for running as uint8 rpm + a separate
+    // fractionalCadence (scale 128). Split with floor so the pair decodes
+    // back to the original spm; Math.round can inflate the integer while
+    // leaving the fractional at 0.5, off by +2 spm on re-import.
+    const half = r.cadence / 2;
+    mesg.cadence = Math.floor(half);
+    mesg.fractionalCadence = half - Math.floor(half);
   }
   if (r.verticalOscillation != null) mesg.verticalOscillation = r.verticalOscillation;
   if (r.groundContactTime != null) mesg.stanceTime = r.groundContactTime;
@@ -97,6 +101,21 @@ export function exportActivityToFit(activity: ParsedActivity): Uint8Array {
   return exportMinimal(encoder, activity);
 }
 
+/**
+ * The Garmin FIT SDK Encoder has a subtle ordering bug: its MesgDefinition
+ * .equals() matches by set-of-fields, but data is written in the JS object's
+ * key-iteration order. If two messages of the same type have the same fields
+ * in a different insertion order, the encoder reuses the first message's
+ * definition — and the second message's bytes land in the wrong fields on
+ * decode (e.g., totalDistance decodes as totalCycles, wildly wrong values).
+ * Normalizing key order before handing messages to the encoder avoids it.
+ */
+function normalizeKeyOrder(m: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(m).sort()) out[k] = m[k];
+  return out;
+}
+
 function exportWithRawMessages(
   encoder: Encoder,
   activity: ParsedActivity,
@@ -105,7 +124,7 @@ function exportWithRawMessages(
   // Write non-record messages from the original file
   const writeMesgs = (key: string, mesgNum: number) => {
     for (const m of raw[key] ?? []) {
-      encoder.writeMesg({ mesgNum, ...(m as Record<string, unknown>) });
+      encoder.writeMesg({ mesgNum, ...normalizeKeyOrder(m as Record<string, unknown>) });
     }
   };
 
@@ -178,7 +197,7 @@ function exportWithRawMessages(
     for (let i = 0; i < untouchedCount; i++) {
       encoder.writeMesg({
         mesgNum: MESG.lap,
-        ...(raw.lapMesgs[i] as Record<string, unknown>),
+        ...normalizeKeyOrder(raw.lapMesgs[i] as Record<string, unknown>),
       });
     }
 
@@ -218,7 +237,9 @@ function exportWithRawMessages(
             : chunk;
         encoder.writeMesg({
           mesgNum: MESG.lap,
-          ...buildExtensionLapMesg(recordsForLap, activity, idx, sampleLap, autoLapDist != null),
+          ...normalizeKeyOrder(
+            buildExtensionLapMesg(recordsForLap, activity, idx, sampleLap, autoLapDist != null),
+          ),
         });
         idx++;
       }
@@ -234,7 +255,7 @@ function exportWithRawMessages(
     if (activity.extended) {
       updateSessionFromRecords(session, activity.records, numLaps);
     }
-    encoder.writeMesg({ mesgNum: MESG.session, ...session });
+    encoder.writeMesg({ mesgNum: MESG.session, ...normalizeKeyOrder(session) });
   }
 
   // Update activity timestamp
@@ -245,7 +266,7 @@ function exportWithRawMessages(
       act.timestamp = toDate(lastRec.timestamp);
       act.totalTimerTime = lastRec.elapsed;
     }
-    encoder.writeMesg({ mesgNum: MESG.activity, ...act });
+    encoder.writeMesg({ mesgNum: MESG.activity, ...normalizeKeyOrder(act) });
   }
 
   return encoder.close();
@@ -363,6 +384,14 @@ function buildExtensionLapMesg(
   const maxCadenceHalf = max(
     extRecords.map((r) => (r.cadence != null ? r.cadence / 2 : undefined)),
   );
+  const { cadInt: avgCadInt, cadFrac: avgCadFrac } = splitCadence(avgCadenceHalf);
+  const { cadInt: maxCadInt, cadFrac: maxCadFrac } = splitCadence(maxCadenceHalf);
+
+  // Total cycles must match totalCycles ≈ avgCadenceHalf * timerTime / 60, or
+  // else Apple Health/Strava derive cadence from totalCycles/time and get a
+  // value that's off by the ratio (original sample lap's cycles over our
+  // extension's duration, which can be ~3x off).
+  const { cycles, fractionalCycles } = integrateCycles(extRecords);
 
   const mesg: Record<string, unknown> = {
     // Preserve extra fields (e.g., left/right balance, intensity factor) from a
@@ -384,8 +413,13 @@ function buildExtensionLapMesg(
     enhancedMaxSpeed: max(extRecords.map((r) => r.speed)),
     avgHeartRate: round(avg(extRecords.map((r) => r.heartRate))),
     maxHeartRate: max(extRecords.map((r) => r.heartRate)),
-    avgCadence: round(avgCadenceHalf),
-    maxCadence: round(maxCadenceHalf),
+    minHeartRate: min(extRecords.map((r) => r.heartRate)),
+    avgCadence: avgCadInt,
+    avgFractionalCadence: avgCadFrac,
+    maxCadence: maxCadInt,
+    maxFractionalCadence: maxCadFrac,
+    totalCycles: cycles,
+    totalFractionalCycles: fractionalCycles,
     avgPower: round(avg(extRecords.map((r) => r.power))),
     maxPower: round(max(extRecords.map((r) => r.power))),
     avgVerticalOscillation: avg(extRecords.map((r) => r.verticalOscillation)),
@@ -415,6 +449,49 @@ function buildExtensionLapMesg(
   delete mesg.trainingStressScore;
 
   return mesg;
+}
+
+function min(vals: (number | undefined)[]): number | undefined {
+  const v = vals.filter((x): x is number => x != null);
+  return v.length > 0 ? Math.min(...v) : undefined;
+}
+
+/** Split a half-cadence value (rpm) into integer + fractional parts matching
+ * the FIT profile's avgCadence (uint8 rpm) and avgFractionalCadence
+ * (scale 128, 0..<1). Using floor preserves round-trip precision; Math.round
+ * can push the integer up while leaving a 0.5 fractional, inflating cadence
+ * by a full rpm (= 2 spm) on decode. */
+function splitCadence(half: number | undefined): { cadInt?: number; cadFrac?: number } {
+  if (half == null || !isFinite(half)) return {};
+  const cadInt = Math.floor(half);
+  const cadFrac = half - cadInt;
+  return { cadInt, cadFrac };
+}
+
+/** Integrate instantaneous cadence over record intervals to get total cycles
+ * (= total strides for running). Without this, an extension lap that
+ * inherits totalCycles from a sibling lap renders cadence as
+ * sibling_cycles / ext_time — wildly wrong in Apple Health and Strava. */
+function integrateCycles(records: RecordPoint[]): { cycles?: number; fractionalCycles?: number } {
+  if (records.length < 2) return {};
+  let totalHalfCycles = 0; // rpm-seconds accumulated
+  let sawCadence = false;
+  for (let i = 1; i < records.length; i++) {
+    const c = records[i].cadence;
+    if (c == null) continue;
+    sawCadence = true;
+    const dt =
+      (new Date(records[i].timestamp).getTime() -
+        new Date(records[i - 1].timestamp).getTime()) /
+      1000;
+    if (dt <= 0 || dt > 60) continue;
+    // cadence is spm; cycles per second = cadence/2/60
+    totalHalfCycles += (c / 2 / 60) * dt;
+  }
+  if (!sawCadence) return {};
+  const cycles = Math.floor(totalHalfCycles);
+  const fractionalCycles = totalHalfCycles - cycles;
+  return { cycles, fractionalCycles };
 }
 
 function round(n: number | undefined): number | undefined {
@@ -473,6 +550,11 @@ function updateSessionFromRecords(
   if (avgHR) session.avgHeartRate = Math.round(avgHR);
   const maxHR = max(records.map((r) => r.heartRate));
   if (maxHR) session.maxHeartRate = Math.round(maxHR);
+  const minHR = (() => {
+    const v = records.map((r) => r.heartRate).filter((x): x is number => x != null);
+    return v.length > 0 ? Math.min(...v) : undefined;
+  })();
+  if (minHR) session.minHeartRate = Math.round(minHR);
 
   const avgSpeed = avg(records.map((r) => r.speed));
   if (avgSpeed) {
@@ -488,11 +570,26 @@ function updateSessionFromRecords(
   const avgCadenceHalf = avg(
     records.map((r) => (r.cadence != null ? r.cadence / 2 : undefined)),
   );
-  if (avgCadenceHalf != null) session.avgCadence = Math.round(avgCadenceHalf);
+  if (avgCadenceHalf != null) {
+    session.avgCadence = Math.floor(avgCadenceHalf);
+    session.avgFractionalCadence = avgCadenceHalf - Math.floor(avgCadenceHalf);
+  }
   const maxCadenceHalf = max(
     records.map((r) => (r.cadence != null ? r.cadence / 2 : undefined)),
   );
-  if (maxCadenceHalf != null) session.maxCadence = Math.round(maxCadenceHalf);
+  if (maxCadenceHalf != null) {
+    session.maxCadence = Math.floor(maxCadenceHalf);
+    session.maxFractionalCadence = maxCadenceHalf - Math.floor(maxCadenceHalf);
+  }
+
+  // Keep totalCycles consistent with avgCadence * totalTimerTime or Apple
+  // Health / Strava derive a wildly wrong activity-wide cadence from the
+  // stale value.
+  const { cycles, fractionalCycles } = integrateCycles(records);
+  if (cycles != null) {
+    session.totalCycles = cycles;
+    session.totalFractionalCycles = fractionalCycles;
+  }
 
   const avgPower = avg(records.map((r) => r.power));
   if (avgPower != null) session.avgPower = Math.round(avgPower);
@@ -524,6 +621,26 @@ function updateSessionFromRecords(
   }
   session.totalAscent = Math.round(ascent);
   session.totalDescent = Math.round(descent);
+
+  // Recompute the bounding box so Strava and map viewers include extension
+  // points — the original session's nec/swc cover only the original track.
+  let necLat: number | undefined;
+  let necLng: number | undefined;
+  let swcLat: number | undefined;
+  let swcLng: number | undefined;
+  for (const r of records) {
+    if (r.lat == null || r.lng == null) continue;
+    if (necLat == null || r.lat > necLat) necLat = r.lat;
+    if (swcLat == null || r.lat < swcLat) swcLat = r.lat;
+    if (necLng == null || r.lng > necLng) necLng = r.lng;
+    if (swcLng == null || r.lng < swcLng) swcLng = r.lng;
+  }
+  if (necLat != null && necLng != null && swcLat != null && swcLng != null) {
+    session.necLat = Math.round(necLat * SEMICIRCLE);
+    session.necLong = Math.round(necLng * SEMICIRCLE);
+    session.swcLat = Math.round(swcLat * SEMICIRCLE);
+    session.swcLong = Math.round(swcLng * SEMICIRCLE);
+  }
 }
 
 /**
