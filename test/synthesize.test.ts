@@ -247,6 +247,77 @@ describe("synthesizeRecords", () => {
     expect(extDist).toBeLessThan(1400);
   });
 
+  it("dynamics match typical-pace laps, not the slowdown before watch died", () => {
+    // Simulate an activity where the runner was at a steady race pace for
+    // most of the run, then slowed and fumbled with the watch for the last
+    // few minutes before it died (lower cadence, higher VO, lower power).
+    // The extension is supposed to continue the run at race pace, so its
+    // dynamics should look like the main body of the run — not the final
+    // minutes.
+    const base = new Date("2026-04-01T10:00:00Z").getTime();
+    const records: RecordPoint[] = [];
+    const RACE_CADENCE = 172;
+    const RACE_VO = 90;
+    const RACE_POWER = 240;
+    const RACE_SPEED = 3.5;
+    let dist = 0;
+    for (let i = 0; i < 1500; i++) {
+      const slowing = i >= 1200; // last 5 min: slowdown + fumbling with watch
+      const speed = slowing ? 2.6 : RACE_SPEED;
+      const cadence = slowing ? 158 + Math.random() * 2 : RACE_CADENCE + Math.random() * 2;
+      const vo = slowing ? 96 + Math.random() : RACE_VO + (Math.random() - 0.5) * 1;
+      const power = slowing ? 195 + Math.random() * 5 : RACE_POWER + (Math.random() - 0.5) * 10;
+      dist += speed;
+      records.push({
+        timestamp: new Date(base + i * 1000).toISOString(),
+        elapsed: i,
+        distance: dist,
+        altitude: 100,
+        lat: 51 + i * 1e-5,
+        lng: 17,
+        heartRate: 150,
+        cadence,
+        speed,
+        verticalOscillation: vo,
+        groundContactTime: 250,
+        strideLength: 1200,
+        verticalRatio: 8,
+        power,
+        lapIndex: 1,
+      });
+    }
+    const lastReal = records[records.length - 1];
+
+    // Target extension: 10 minutes at race pace (~2.1 km) → ~3.5 m/s target.
+    const extDist = RACE_SPEED * 600;
+    const latDelta = extDist / 111_000;
+    const synthetic = synthesizeRecords({
+      existingRecords: records,
+      waypoints: [
+        [lastReal.lat!, lastReal.lng!],
+        [lastReal.lat! + latDelta, lastReal.lng!],
+      ],
+      totalFinishTimeSeconds: lastReal.elapsed + 600,
+    });
+
+    const meanOf = (
+      vals: (number | undefined)[],
+    ): number => {
+      const v = vals.filter((x): x is number => x != null);
+      return v.reduce((s, x) => s + x, 0) / v.length;
+    };
+
+    const cadenceMean = meanOf(synthetic.map((r) => r.cadence));
+    const voMean = meanOf(synthetic.map((r) => r.verticalOscillation));
+    const powerMean = meanOf(synthetic.map((r) => r.power));
+
+    // Should be close to the RACE values (body of run), not the SLOWING
+    // values from the final minutes.
+    expect(cadenceMean).toBeGreaterThan(168); // race ~172, slow ~159
+    expect(voMean).toBeLessThan(93); // race ~90, slow ~96.5
+    expect(powerMean).toBeGreaterThan(225); // race ~240, slow ~197
+  });
+
   it("synthetic HR blends smoothly from last real HR (no jump)", () => {
     const existing = makeRecords(300);
     const lastReal = existing[existing.length - 1];
