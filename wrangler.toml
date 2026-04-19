@@ -18,9 +18,10 @@ database_name = "paceapp"
 database_id = "5a4bd2b8-51f1-45f7-8cb6-dc5de0c00daa"
 migrations_dir = "workers/migrations"
 
+# The EMAIL send_email binding is configured in the Cloudflare dashboard
+# (Pages project → Settings → Functions → Bindings), since send_email is
+# not yet supported in Pages wrangler.toml.
+
 [[r2_buckets]]
 binding = "FIT_BUCKET"
 bucket_name = "paceapp-fit"
-
-[[send_email]]
-name = "EMAIL"
