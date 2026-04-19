@@ -18,7 +18,7 @@ compatibility_flags = ["nodejs_compat"]
 
 # Vars: non-secret configuration. Override SESSION_SECRET via `wrangler secret put`.
 [vars]
-APP_URL = "http://localhost:5173/paceapp/"
+APP_URL = "https://paceapp.pages.dev/"
 MAGIC_FROM = "auth@paceapp.example.com"
 MAGIC_FROM_NAME = "PaceApp"
 MAGIC_TTL_SECONDS = "900"

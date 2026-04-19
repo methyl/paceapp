@@ -7,7 +7,6 @@ import tailwindcss from '@tailwindcss/vite'
 const API_TARGET = process.env.VITE_API_TARGET ?? 'http://127.0.0.1:8787'
 
 export default defineConfig({
-  base: '/paceapp/',
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
