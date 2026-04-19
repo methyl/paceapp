@@ -104,61 +104,198 @@ export function splitRecordsByDistance(
 }
 
 /**
+ * Like splitRecordsByDistance, but the first chunk is `firstChunkDist` long
+ * instead of `chunkDist`. Used to complete a partial trailing lap: the
+ * first synth chunk fills the remaining distance to `chunkDist`, and every
+ * subsequent chunk is a full `chunkDist`.
+ */
+export function splitRecordsWithFirstOffset(
+  records: RecordPoint[],
+  chunkDist: number,
+  firstChunkDist: number,
+): RecordPoint[][] {
+  if (records.length === 0 || chunkDist <= 0 || firstChunkDist <= 0) return [records];
+  const chunks: RecordPoint[][] = [];
+  const startDist = records[0].distance;
+  let chunkStart = 0;
+  let nextBoundary = startDist + firstChunkDist;
+
+  for (let i = 1; i < records.length; i++) {
+    if (records[i].distance >= nextBoundary) {
+      chunks.push(records.slice(chunkStart, i + 1));
+      chunkStart = i;
+      nextBoundary = records[i].distance + chunkDist;
+    }
+  }
+  if (chunkStart < records.length - 1) {
+    chunks.push(records.slice(chunkStart));
+  }
+  return chunks.length > 0 ? chunks : [records];
+}
+
+function summarizeChunk(chunk: RecordPoint[], lapIndex: number): LapSummary | null {
+  if (chunk.length < 2) return null;
+  const first = chunk[0];
+  const last = chunk[chunk.length - 1];
+  const dist = last.distance - first.distance;
+  const time = last.elapsed - first.elapsed;
+  if (dist <= 0 || time <= 0) return null;
+
+  const avg = (vals: (number | undefined)[]): number | undefined => {
+    const v = vals.filter((x): x is number => x != null);
+    return v.length > 0 ? v.reduce((s, x) => s + x, 0) / v.length : undefined;
+  };
+  const max = (vals: (number | undefined)[]): number | undefined => {
+    const v = vals.filter((x): x is number => x != null);
+    return v.length > 0 ? Math.max(...v) : undefined;
+  };
+
+  const avgSpeed = dist / time;
+  return {
+    lapIndex,
+    startTime: first.timestamp,
+    totalDistance: dist,
+    totalElapsedTime: time,
+    avgHeartRate: avg(chunk.map((r) => r.heartRate)),
+    maxHeartRate: max(chunk.map((r) => r.heartRate)),
+    avgCadence: avg(chunk.map((r) => r.cadence)),
+    avgSpeed,
+    avgPace: speedToPace(avgSpeed),
+    avgVerticalOscillation: avg(chunk.map((r) => r.verticalOscillation)),
+    avgGroundContactTime: avg(chunk.map((r) => r.groundContactTime)),
+    avgGroundContactTimeBalance: avg(chunk.map((r) => r.groundContactTimeBalance)),
+    avgStrideLength: avg(chunk.map((r) => r.strideLength)),
+    avgVerticalRatio: avg(chunk.map((r) => r.verticalRatio)),
+    avgPower: avg(chunk.map((r) => r.power)),
+  };
+}
+
+/**
+ * Merge an existing partial lap summary with the synth records that
+ * completed it. Metric averages are weighted by elapsed time.
+ */
+export function mergeWithPartialLap(
+  partial: LapSummary,
+  synthChunk: RecordPoint[],
+): LapSummary {
+  const synthSummary = summarizeChunk(synthChunk, partial.lapIndex);
+  if (!synthSummary) return partial;
+
+  const totalTime = partial.totalElapsedTime + synthSummary.totalElapsedTime;
+  const totalDist = partial.totalDistance + synthSummary.totalDistance;
+  const weighted = (a: number | undefined, b: number | undefined): number | undefined => {
+    if (a == null && b == null) return undefined;
+    if (a == null) return b;
+    if (b == null) return a;
+    return (a * partial.totalElapsedTime + b * synthSummary.totalElapsedTime) / totalTime;
+  };
+  const maxOf = (a: number | undefined, b: number | undefined): number | undefined => {
+    if (a == null) return b;
+    if (b == null) return a;
+    return Math.max(a, b);
+  };
+
+  const avgSpeed = totalDist / totalTime;
+  return {
+    lapIndex: partial.lapIndex,
+    startTime: partial.startTime,
+    totalDistance: totalDist,
+    totalElapsedTime: totalTime,
+    avgHeartRate: weighted(partial.avgHeartRate, synthSummary.avgHeartRate),
+    maxHeartRate: maxOf(partial.maxHeartRate, synthSummary.maxHeartRate),
+    avgCadence: weighted(partial.avgCadence, synthSummary.avgCadence),
+    avgSpeed,
+    avgPace: speedToPace(avgSpeed),
+    avgVerticalOscillation: weighted(
+      partial.avgVerticalOscillation, synthSummary.avgVerticalOscillation,
+    ),
+    avgGroundContactTime: weighted(
+      partial.avgGroundContactTime, synthSummary.avgGroundContactTime,
+    ),
+    avgGroundContactTimeBalance: weighted(
+      partial.avgGroundContactTimeBalance, synthSummary.avgGroundContactTimeBalance,
+    ),
+    avgStrideLength: weighted(partial.avgStrideLength, synthSummary.avgStrideLength),
+    avgVerticalRatio: weighted(partial.avgVerticalRatio, synthSummary.avgVerticalRatio),
+    avgPower: weighted(partial.avgPower, synthSummary.avgPower),
+  };
+}
+
+export interface ExtensionLapsResult {
+  /**
+   * Laps produced from the extension. If `replacesLastExistingLap` is true,
+   * the first entry is a merged replacement for the last existing lap (a
+   * partial auto-lap that got absorbed), and subsequent entries are new.
+   */
+  laps: LapSummary[];
+  /**
+   * Whether the last existing lap was absorbed into the first entry of
+   * `laps`. Callers should drop the last existing lap before appending.
+   */
+  replacesLastExistingLap: boolean;
+}
+
+/**
  * Build LapSummary entries for synthetic extension records so the app's
  * lap table (and anything else that reads `activity.laps`) reflects the
  * extension. If the original activity used uniform auto-laps, the extension
  * is split into matching chunks; otherwise one summary lap is produced.
+ *
+ * When the original activity's last lap is partial (watch died mid-lap),
+ * the first synth chunk completes that lap — returned as a merged summary
+ * that replaces the partial. The caller is expected to splice accordingly.
  */
 export function buildExtensionLaps(
   extRecords: RecordPoint[],
   existingLaps: LapSummary[],
-): LapSummary[] {
-  if (extRecords.length < 2) return [];
+): ExtensionLapsResult {
+  if (extRecords.length < 2) return { laps: [], replacesLastExistingLap: false };
   const autoLapDist = detectAutoLapDistance(existingLaps);
-  const chunks = autoLapDist
-    ? splitRecordsByDistance(extRecords, autoLapDist)
-    : [extRecords];
+
+  // Detect partial trailing lap worth absorbing: has to be clearly shorter
+  // than the auto-lap distance (else it's just the natural run end) but not
+  // a zero-length artifact.
+  const lastExisting = existingLaps.length > 0
+    ? existingLaps[existingLaps.length - 1]
+    : null;
+  const partial =
+    autoLapDist &&
+    lastExisting &&
+    lastExisting.totalDistance > 0 &&
+    lastExisting.totalDistance < autoLapDist * 0.9
+      ? lastExisting
+      : null;
+
+  let chunks: RecordPoint[][];
+  if (autoLapDist && partial) {
+    const remainder = autoLapDist - partial.totalDistance;
+    chunks = splitRecordsWithFirstOffset(extRecords, autoLapDist, remainder);
+  } else if (autoLapDist) {
+    chunks = splitRecordsByDistance(extRecords, autoLapDist);
+  } else {
+    chunks = [extRecords];
+  }
 
   const result: LapSummary[] = [];
-  let idx = existingLaps.length + 1;
-  for (const chunk of chunks) {
+  let idx = partial ? partial.lapIndex + 1 : existingLaps.length + 1;
+
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
     if (chunk.length < 2) continue;
-    const first = chunk[0];
-    const last = chunk[chunk.length - 1];
-    const dist = last.distance - first.distance;
-    const time = last.elapsed - first.elapsed;
-    if (dist <= 0 || time <= 0) continue;
 
-    const avg = (vals: (number | undefined)[]): number | undefined => {
-      const v = vals.filter((x): x is number => x != null);
-      return v.length > 0 ? v.reduce((s, x) => s + x, 0) / v.length : undefined;
-    };
-    const max = (vals: (number | undefined)[]): number | undefined => {
-      const v = vals.filter((x): x is number => x != null);
-      return v.length > 0 ? Math.max(...v) : undefined;
-    };
+    if (ci === 0 && partial) {
+      const merged = mergeWithPartialLap(partial, chunk);
+      result.push(merged);
+      continue;
+    }
 
-    const avgSpeed = dist / time;
-    result.push({
-      lapIndex: idx,
-      startTime: first.timestamp,
-      totalDistance: dist,
-      totalElapsedTime: time,
-      avgHeartRate: avg(chunk.map((r) => r.heartRate)),
-      maxHeartRate: max(chunk.map((r) => r.heartRate)),
-      avgCadence: avg(chunk.map((r) => r.cadence)),
-      avgSpeed,
-      avgPace: speedToPace(avgSpeed),
-      avgVerticalOscillation: avg(chunk.map((r) => r.verticalOscillation)),
-      avgGroundContactTime: avg(chunk.map((r) => r.groundContactTime)),
-      avgGroundContactTimeBalance: avg(chunk.map((r) => r.groundContactTimeBalance)),
-      avgStrideLength: avg(chunk.map((r) => r.strideLength)),
-      avgVerticalRatio: avg(chunk.map((r) => r.verticalRatio)),
-      avgPower: avg(chunk.map((r) => r.power)),
-    });
+    const lap = summarizeChunk(chunk, idx);
+    if (!lap) continue;
+    result.push(lap);
     idx++;
   }
-  return result;
+
+  return { laps: result, replacesLastExistingLap: !!partial };
 }
 
 export interface MetricStats {
@@ -351,6 +488,23 @@ export function analyzePaceMatchedTrend(
   const stats = buildStats(matched);
   const lastReal = records[records.length - 1];
 
+  // Cardiac drift at race pace, fit over the matched subset. Using the
+  // recent-window slope instead would extrapolate any slowdown-induced HR
+  // decline forever, pulling synth HR well below race-pace range.
+  const hrPairs = matched
+    .filter((r) => r.heartRate != null)
+    .map((r) => ({ t: r.elapsed, hr: r.heartRate! }));
+  let hrSlope = recent.hrSlope;
+  if (hrPairs.length >= 5) {
+    const n = hrPairs.length;
+    const sumT = hrPairs.reduce((s, p) => s + p.t, 0);
+    const sumHR = hrPairs.reduce((s, p) => s + p.hr, 0);
+    const sumTT = hrPairs.reduce((s, p) => s + p.t * p.t, 0);
+    const sumTHR = hrPairs.reduce((s, p) => s + p.t * p.hr, 0);
+    const denom = n * sumTT - sumT * sumT;
+    hrSlope = denom !== 0 ? (n * sumTHR - sumT * sumHR) / denom : 0;
+  }
+
   // Preserve smooth handoff from the real recording: AR(1) generators are
   // seeded at `.last`, so use the actual last record's value there.
   const withLast = (s: MetricStats, last: number | undefined): MetricStats =>
@@ -380,7 +534,7 @@ export function analyzePaceMatchedTrend(
     verticalRatio,
     power,
     altitude,
-    hrSlope: recent.hrSlope,
+    hrSlope,
     recordInterval: recent.recordInterval,
     avgSpeed: speed.mean,
     lastHR: hr.last,
@@ -491,7 +645,15 @@ export function synthesizeRecords(params: {
 
   // Seed each AR(1) at the last observed value to blend smoothly from the
   // real data into the synthetic extension.
-  const hrNoise = createAR1(0, trend.hr.std, 0.92, 0);
+  //
+  // HR uses a deviation-from-mean AR(1): seeded at (last - mean) so the
+  // first synthetic HR matches the last real HR, then regresses toward the
+  // pace-matched mean. Without this, a slowdown-before-watch-died would
+  // leave HR anchored at a suppressed value and slope-extrapolated downward
+  // for the whole extension.
+  const hrMean = trend.hr.mean > 0 ? trend.hr.mean : trend.hr.last;
+  const hrBaseline = trend.hr.last > 0 ? trend.hr.last : hrMean;
+  const hrDevGen = createAR1(0, trend.hr.std, 0.95, hrBaseline - hrMean);
   const cadenceGen = createAR1(trend.cadence.mean, trend.cadence.std, 0.9, trend.cadence.last);
   const voGen = createAR1(trend.vo.mean, trend.vo.std, 0.85, trend.vo.last);
   const gctGen = createAR1(trend.gct.mean, trend.gct.std, 0.85, trend.gct.last);
@@ -519,17 +681,32 @@ export function synthesizeRecords(params: {
   for (let i = 0; i < numRecords; i++) stepDists[i] *= scale;
 
   // Clamps: allow synthetic values to roam slightly beyond the observed range
-  // (real runs do too) but keep them in physiological bounds.
+  // (real runs do too) but keep them in physiological bounds. The range must
+  // also include each metric's `.last` (the AR(1) handoff seed) so the first
+  // synth value doesn't get clamped away from a smooth transition.
   const pad = (stat: MetricStats, frac = 0.15): [number, number] => {
     if (stat.count === 0) return [-Infinity, Infinity];
-    const range = Math.max(stat.max - stat.min, Math.abs(stat.mean) * frac, 1e-6);
-    return [stat.min - range * frac, stat.max + range * frac];
+    const lo = stat.last != null ? Math.min(stat.min, stat.last) : stat.min;
+    const hi = stat.last != null ? Math.max(stat.max, stat.last) : stat.max;
+    const range = Math.max(hi - lo, Math.abs(stat.mean) * frac, 1e-6);
+    return [lo - range * frac, hi + range * frac];
+  };
+  const rangeWithLast = (stat: MetricStats, pad: number): [number, number] => {
+    const lo = Math.min(stat.min, stat.last);
+    const hi = Math.max(stat.max, stat.last);
+    return [lo - pad, hi + pad];
   };
   const [hrMin, hrMax] = trend.hr.count > 0
-    ? [Math.max(60, trend.hr.min - 8), Math.min(205, trend.hr.max + 8)]
+    ? (() => {
+        const [lo, hi] = rangeWithLast(trend.hr, 8);
+        return [Math.max(60, lo), Math.min(205, hi)] as [number, number];
+      })()
     : [60, 205];
   const [cadMin, cadMax] = trend.cadence.count > 0
-    ? [Math.max(120, trend.cadence.min - 6), Math.min(230, trend.cadence.max + 6)]
+    ? (() => {
+        const [lo, hi] = rangeWithLast(trend.cadence, 6);
+        return [Math.max(120, lo), Math.min(230, hi)] as [number, number];
+      })()
     : [120, 230];
   const [voMin, voMax] = pad(trend.vo);
   const [gctMin, gctMax] = pad(trend.gct);
@@ -553,8 +730,7 @@ export function synthesizeRecords(params: {
     let hr: number | undefined;
     if (trend.hr.count > 0) {
       const drift = trend.hrSlope * (i + 1) * dt;
-      const base = trend.hr.last > 0 ? trend.hr.last : trend.hr.mean;
-      hr = Math.round(clamp(base + drift + hrNoise(), hrMin, hrMax));
+      hr = Math.round(clamp(hrMean + drift + hrDevGen(), hrMin, hrMax));
     }
 
     const cadence = trend.cadence.count > 0
