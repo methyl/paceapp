@@ -4,7 +4,7 @@ compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = "./dist"
 
 [vars]
-APP_URL = "https://paceapp.pages.dev/"
+APP_URL = "https://paceapp-7mx.pages.dev/"
 MAGIC_FROM = "auth@mail.lucjan.us"
 MAGIC_FROM_NAME = "PaceApp"
 MAGIC_TTL_SECONDS = "900"
