@@ -9,6 +9,8 @@ interface Props {
   error: string;
   onImportAll: () => void;
   onImportAllForce: () => void;
+  onDownloadMissing: () => void;
+  missingRemoteCount: number;
 }
 
 export default function SyncPanel({
@@ -19,12 +21,14 @@ export default function SyncPanel({
   error,
   onImportAll,
   onImportAllForce,
+  onDownloadMissing,
+  missingRemoteCount,
 }: Props) {
   if (!loggedIn) return null;
 
   const remoteCount = remote?.length ?? 0;
   const running = progress.status === "running";
-  const newOnes = Math.max(0, localCount - remoteCount);
+  const newLocal = Math.max(0, localCount - remoteCount);
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-3 flex items-center justify-between text-sm">
@@ -35,12 +39,12 @@ export default function SyncPanel({
         </span>
         {running && progress.currentFile && (
           <span className="text-blue-600 text-xs truncate max-w-xs">
-            uploading {progress.currentFile}… ({progress.done}/{progress.total})
+            {progress.currentFile}… ({progress.done}/{progress.total})
           </span>
         )}
         {progress.status === "done" && (
           <span className="text-green-700 text-xs">
-            imported {progress.done} of {progress.total}
+            processed {progress.done} of {progress.total}
             {progress.failed > 0 ? ` (${progress.failed} failed)` : ""}
           </span>
         )}
@@ -50,12 +54,21 @@ export default function SyncPanel({
         )}
       </div>
       <div className="flex items-center gap-2">
+        {missingRemoteCount > 0 && (
+          <button
+            onClick={onDownloadMissing}
+            disabled={running}
+            className="px-3 py-1.5 rounded bg-emerald-600 text-white font-medium text-xs disabled:opacity-50"
+          >
+            {running ? "Working…" : `Download ${missingRemoteCount}`}
+          </button>
+        )}
         <button
           onClick={onImportAll}
           disabled={running || localCount === 0}
           className="px-3 py-1.5 rounded bg-blue-600 text-white font-medium text-xs disabled:opacity-50"
         >
-          {running ? "Importing…" : `Import ${newOnes} new`}
+          {running ? "Importing…" : `Upload ${newLocal} new`}
         </button>
         <button
           onClick={onImportAllForce}

@@ -107,5 +107,50 @@ export function useSync(enabled: boolean) {
     [enabled, refresh],
   );
 
-  return { remote, remoteError, progress, refresh, importAll };
+  const downloadMissing = useCallback(
+    async (
+      localFileNames: Set<string>,
+      onActivity: (activity: ParsedActivity) => void,
+    ) => {
+      if (!enabled) return;
+      let list: RemoteActivitySummary[];
+      try {
+        const { activities } = await api.listActivities();
+        list = activities;
+        setRemote(activities);
+      } catch (e) {
+        setProgress({
+          status: "error",
+          total: 0,
+          done: 0,
+          failed: 0,
+          error: e instanceof Error ? e.message : "failed to list remote",
+        });
+        return;
+      }
+
+      const missing = list.filter((r) => !localFileNames.has(r.fileName));
+      setProgress({ status: "running", total: missing.length, done: 0, failed: 0 });
+
+      let done = 0;
+      let failed = 0;
+      for (const r of missing) {
+        setProgress((p) => ({ ...p, currentFile: r.fileName }));
+        try {
+          const parsed = await api.downloadActivityJson<ParsedActivity>(r.id);
+          onActivity(parsed);
+          done++;
+        } catch (e) {
+          console.error("download failed for", r.fileName, e);
+          failed++;
+        }
+        setProgress((p) => ({ ...p, done: done + failed }));
+      }
+
+      setProgress({ status: "done", total: missing.length, done, failed });
+    },
+    [enabled],
+  );
+
+  return { remote, remoteError, progress, refresh, importAll, downloadMissing };
 }

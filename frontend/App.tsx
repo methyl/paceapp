@@ -47,6 +47,25 @@ function App() {
   const loggedIn = !!auth.user;
   const sync = useSync(loggedIn);
 
+  const localFileNames = useMemo(
+    () => new Set(activities.map((a) => a.fileName)),
+    [activities],
+  );
+  const missingRemoteCount = useMemo(
+    () => (sync.remote ?? []).filter((r) => !localFileNames.has(r.fileName)).length,
+    [sync.remote, localFileNames],
+  );
+
+  const handleDownloadMissing = useCallback(() => {
+    sync.downloadMissing(localFileNames, (downloaded) => {
+      const reprocessed = reprocessActivity(downloaded);
+      setActivities((prev) => {
+        if (prev.some((a) => a.fileName === reprocessed.fileName)) return prev;
+        return [...prev, reprocessed];
+      });
+    });
+  }, [sync, localFileNames]);
+
   const isRunning = (a: ParsedActivity) =>
     !a.summary.sport || a.summary.sport === "running" || a.summary.sport === "trail_running";
   const runningActivities = useMemo(
@@ -299,7 +318,7 @@ function App() {
 
         {/* Empty state */}
         {!loading && activities.length === 0 && (
-          <div className="max-w-lg mx-auto mt-12">
+          <div className="max-w-lg mx-auto mt-12 space-y-6">
             <div className="text-center mb-8">
               <h2 className="text-3xl font-bold text-gray-900 mb-2">
                 Analyze Your Runs
@@ -309,6 +328,17 @@ function App() {
                 running dynamics and compare heart rate across workouts.
               </p>
             </div>
+            <SyncPanel
+              loggedIn={loggedIn}
+              localCount={activities.length}
+              remote={sync.remote}
+              progress={sync.progress}
+              error={sync.remoteError}
+              onImportAll={() => sync.importAll(activities)}
+              onImportAllForce={() => sync.importAll(activities, { force: true })}
+              onDownloadMissing={handleDownloadMissing}
+              missingRemoteCount={missingRemoteCount}
+            />
             <FileUpload onFilesLoaded={handleFiles} multiple />
           </div>
         )}
@@ -338,6 +368,8 @@ function App() {
               error={sync.remoteError}
               onImportAll={() => sync.importAll(activities)}
               onImportAllForce={() => sync.importAll(activities, { force: true })}
+              onDownloadMissing={handleDownloadMissing}
+              missingRemoteCount={missingRemoteCount}
             />
             <LibraryMap activities={runningActivities} onSelect={handleSelectActivity} />
             <ActivityList

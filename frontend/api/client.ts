@@ -83,4 +83,7 @@ export const api = {
     form.append("parsed", new Blob([parsedJson], { type: "application/json" }), "parsed.json");
     return request("/activities", { method: "POST", body: form });
   },
+  downloadActivityJson<T = unknown>(id: string): Promise<T> {
+    return request<T>(`/activities/${id}/json`);
+  },
 };
