@@ -1,0 +1,44 @@
+# Cloudflare Worker config for PaceApp backend.
+#
+# Before first deploy:
+#   1. wrangler d1 create paceapp           -> paste database_id below
+#   2. wrangler r2 bucket create paceapp-fit
+#   3. wrangler secret put SESSION_SECRET   (32+ random bytes, base64/hex)
+#   4. Configure Cloudflare Email Service sender domain in the dashboard.
+#   5. npm run db:migrate:remote
+#   6. npm run deploy
+#
+# Local dev uses miniflare's local D1/R2 emulation. Magic-link emails are
+# logged to the console in dev unless EMAIL binding is wired to a real domain.
+
+name = "paceapp-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-15"
+compatibility_flags = ["nodejs_compat"]
+
+# Vars: non-secret configuration. Override SESSION_SECRET via `wrangler secret put`.
+[vars]
+APP_URL = "http://localhost:5173/paceapp/"
+MAGIC_FROM = "auth@paceapp.example.com"
+MAGIC_FROM_NAME = "PaceApp"
+MAGIC_TTL_SECONDS = "900"
+SESSION_TTL_SECONDS = "2592000"
+COOKIE_DOMAIN = ""
+# Dev-only: when "true", the magic link is returned in the login response
+# instead of being emailed. Never set this in production.
+DEV_RETURN_MAGIC_LINK = "false"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "paceapp"
+database_id = "PLACEHOLDER_REPLACE_AFTER_WRANGLER_D1_CREATE"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "FIT_BUCKET"
+bucket_name = "paceapp-fit"
+
+# Cloudflare Email Service (Email Sending) binding.
+# Requires Workers Paid plan and a verified sender domain.
+[[send_email]]
+name = "EMAIL"
