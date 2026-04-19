@@ -218,6 +218,46 @@ function computeStats(vals: (number | undefined)[]): MetricStats {
 }
 
 /**
+ * Return only records plausibly recorded while actively running: cadence in
+ * a believable range or moving above a slow-walk pace. This filters out stops,
+ * pauses, and dropped samples — common contamination at the very end of a
+ * recording when the watch is being checked or about to die.
+ */
+export function selectActiveRecords(records: RecordPoint[]): RecordPoint[] {
+  return records.filter((r) => {
+    const cadenceOk = r.cadence != null && r.cadence >= 120;
+    const speedOk = r.speed != null && r.speed >= 1.5;
+    return cadenceOk || speedOk;
+  });
+}
+
+function buildStats(records: RecordPoint[]): {
+  speed: MetricStats;
+  hr: MetricStats;
+  cadence: MetricStats;
+  vo: MetricStats;
+  gct: MetricStats;
+  gctBalance: MetricStats;
+  stride: MetricStats;
+  verticalRatio: MetricStats;
+  power: MetricStats;
+  altitude: MetricStats;
+} {
+  return {
+    speed: computeStats(records.map((r) => r.speed)),
+    hr: computeStats(records.map((r) => r.heartRate)),
+    cadence: computeStats(records.map((r) => r.cadence)),
+    vo: computeStats(records.map((r) => r.verticalOscillation)),
+    gct: computeStats(records.map((r) => r.groundContactTime)),
+    gctBalance: computeStats(records.map((r) => r.groundContactTimeBalance)),
+    stride: computeStats(records.map((r) => r.strideLength)),
+    verticalRatio: computeStats(records.map((r) => r.verticalRatio)),
+    power: computeStats(records.map((r) => r.power)),
+    altitude: computeStats(records.map((r) => r.altitude)),
+  };
+}
+
+/**
  * Analyze the recent portion of the run to extract per-metric stats used
  * to extrapolate trends and drive realistic variability in the extension.
  * Default window is ~5 minutes at 1Hz — long enough to capture natural
@@ -229,16 +269,7 @@ export function analyzeRecentTrend(
 ): RecentTrend {
   const window = records.slice(-Math.min(windowSize, records.length));
 
-  const speed = computeStats(window.map((r) => r.speed));
-  const hr = computeStats(window.map((r) => r.heartRate));
-  const cadence = computeStats(window.map((r) => r.cadence));
-  const vo = computeStats(window.map((r) => r.verticalOscillation));
-  const gct = computeStats(window.map((r) => r.groundContactTime));
-  const gctBalance = computeStats(window.map((r) => r.groundContactTimeBalance));
-  const stride = computeStats(window.map((r) => r.strideLength));
-  const verticalRatio = computeStats(window.map((r) => r.verticalRatio));
-  const power = computeStats(window.map((r) => r.power));
-  const altitude = computeStats(window.map((r) => r.altitude));
+  const stats = buildStats(window);
 
   // Linear regression: HR vs elapsed time
   const hrPairs = window
@@ -268,6 +299,77 @@ export function analyzeRecentTrend(
   const recordInterval = gaps.length > 0 ? gaps[Math.floor(gaps.length / 2)] : 1;
 
   return {
+    ...stats,
+    hrSlope,
+    recordInterval,
+    avgSpeed: stats.speed.mean,
+    lastHR: stats.hr.last,
+    maxHR: stats.hr.max,
+    avgCadence: stats.cadence.mean,
+    avgVO: stats.vo.mean,
+    avgGCT: stats.gct.mean,
+    avgStrideLength: stats.stride.mean,
+    avgVerticalRatio: stats.verticalRatio.mean,
+    avgPower: stats.power.mean,
+    lastAltitude: stats.altitude.last,
+  };
+}
+
+/**
+ * Compute trend stats from records that were run at a similar pace to
+ * `targetSpeed` (within ±tolerance), ignoring stops and non-running samples.
+ * This captures the runner's dynamics at race pace, regardless of whether
+ * the final minutes of the recording happen to reflect that — e.g. a
+ * slowdown or pause right before the watch died skews a pure-recent window.
+ *
+ * HR drift slope and record interval are still taken from the recent window
+ * since those are time-based. Each metric's `.last` is overridden with the
+ * actually-last record's value so the AR(1) generators hand off smoothly
+ * from the real data.
+ *
+ * Falls back to analyzeRecentTrend if too few records match the target pace.
+ */
+export function analyzePaceMatchedTrend(
+  records: RecordPoint[],
+  targetSpeed: number,
+  options: { paceTolerance?: number; minSamples?: number } = {},
+): RecentTrend {
+  const recent = analyzeRecentTrend(records);
+  if (records.length === 0 || targetSpeed <= 0) return recent;
+
+  const tol = options.paceTolerance ?? 0.15;
+  const minSamples = options.minSamples ?? 30;
+  const minSpeed = targetSpeed * (1 - tol);
+  const maxSpeed = targetSpeed * (1 + tol);
+
+  const matched = selectActiveRecords(records).filter(
+    (r) => r.speed != null && r.speed >= minSpeed && r.speed <= maxSpeed,
+  );
+
+  if (matched.length < minSamples) return recent;
+
+  const stats = buildStats(matched);
+  const lastReal = records[records.length - 1];
+
+  // Preserve smooth handoff from the real recording: AR(1) generators are
+  // seeded at `.last`, so use the actual last record's value there.
+  const withLast = (s: MetricStats, last: number | undefined): MetricStats =>
+    last != null ? { ...s, last } : s;
+
+  const speed = withLast(stats.speed, lastReal.speed);
+  const hr = withLast(stats.hr, lastReal.heartRate);
+  const cadence = withLast(stats.cadence, lastReal.cadence);
+  const vo = withLast(stats.vo, lastReal.verticalOscillation);
+  const gct = withLast(stats.gct, lastReal.groundContactTime);
+  const gctBalance = withLast(stats.gctBalance, lastReal.groundContactTimeBalance);
+  const stride = withLast(stats.stride, lastReal.strideLength);
+  const verticalRatio = withLast(stats.verticalRatio, lastReal.verticalRatio);
+  const power = withLast(stats.power, lastReal.power);
+  // Altitude should reflect where the runner actually is now, not average
+  // altitude over the pace-matched subset which could be anywhere on the course.
+  const altitude = recent.altitude;
+
+  return {
     speed,
     hr,
     cadence,
@@ -278,8 +380,8 @@ export function analyzeRecentTrend(
     verticalRatio,
     power,
     altitude,
-    hrSlope,
-    recordInterval,
+    hrSlope: recent.hrSlope,
+    recordInterval: recent.recordInterval,
     avgSpeed: speed.mean,
     lastHR: hr.last,
     maxHR: hr.max,
@@ -330,7 +432,6 @@ export function synthesizeRecords(params: {
   if (existingRecords.length === 0 || waypoints.length < 2) return [];
 
   const last = existingRecords[existingRecords.length - 1];
-  const trend = analyzeRecentTrend(existingRecords);
 
   const extensionDuration = totalFinishTimeSeconds - last.elapsed;
   if (extensionDuration <= 0) return [];
@@ -353,6 +454,13 @@ export function synthesizeRecords(params: {
   const totalRouteDist = routeCum[routeCum.length - 1];
   if (totalRouteDist <= 0) return [];
 
+  // Match the trend to what the runner does at the extension pace, not
+  // whatever happened in the last 5 min — which is often a slowdown right
+  // before the watch died and skews dynamics low (cadence/power) and high
+  // (VO) vs. typical race-pace laps.
+  const targetSpeedForTrend = totalRouteDist / extensionDuration;
+  const trend = analyzePaceMatchedTrend(existingRecords, targetSpeedForTrend);
+
   const positionAt = (d: number): [number, number] => {
     if (d <= 0) return routeLine[0];
     if (d >= totalRouteDist) return routeLine[routeLine.length - 1];
@@ -372,7 +480,7 @@ export function synthesizeRecords(params: {
   };
 
   const dt = trend.recordInterval;
-  const targetSpeed = totalRouteDist / extensionDuration;
+  const targetSpeed = targetSpeedForTrend;
   const numRecords = Math.max(1, Math.round(extensionDuration / dt));
 
   // Per-step pace deviation. If the recent window is unusually steady
