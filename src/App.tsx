@@ -12,6 +12,7 @@ import HillSprintsView from "./components/HillSprints";
 import RouteMap from "./components/RouteMap";
 import LibraryMap from "./components/LibraryMap";
 import RunExtension from "./components/RunExtension";
+import { useSnappedRoute } from "./routing";
 import { parseFitFile, reprocessActivity } from "./parseFit";
 import { loadActivities, saveActivities, clearActivities } from "./storage";
 import { exportActivityToFit, downloadFitFile } from "./exportFit";
@@ -33,6 +34,9 @@ function App() {
   const [z2, setZ2] = useState(getZ2Ceiling);
   const [extensionWaypoints, setExtensionWaypoints] = useState<[number, number][]>([]);
   const [extensionMode, setExtensionMode] = useState(false);
+  const snappedExtension = useSnappedRoute(
+    extensionMode ? extensionWaypoints : [],
+  );
   const [timeRange, setTimeRange] = useState<string>("all");
 
   const isRunning = (a: ParsedActivity) =>
@@ -347,6 +351,8 @@ function App() {
               editMode={extensionMode}
               waypoints={extensionWaypoints}
               onWaypointsChange={setExtensionWaypoints}
+              snappedPath={snappedExtension.route?.coordinates}
+              snappedDistance={snappedExtension.route?.distance}
             />
             <div className="flex items-center gap-3">
               <RunExtension
@@ -357,6 +363,9 @@ function App() {
                 onWaypointsChange={setExtensionWaypoints}
                 _editMode={extensionMode}
                 onEditModeChange={setExtensionMode}
+                snappedRoute={snappedExtension.route}
+                routeLoading={snappedExtension.loading}
+                routeError={snappedExtension.error}
               />
               <button
                 onClick={handleExport}

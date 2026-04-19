@@ -10,6 +10,10 @@ interface RouteMapProps {
   editMode?: boolean;
   waypoints?: [number, number][];
   onWaypointsChange?: (waypoints: [number, number][]) => void;
+  /** Road/trail-snapped polyline between waypoints. Falls back to straight lines if absent. */
+  snappedPath?: [number, number][];
+  /** Total snapped route distance in meters (used for the overlay readout). */
+  snappedDistance?: number;
 }
 
 export default function RouteMap({
@@ -18,6 +22,8 @@ export default function RouteMap({
   editMode = false,
   waypoints = [],
   onWaypointsChange,
+  snappedPath,
+  snappedDistance,
 }: RouteMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const leafletMap = useRef<L.Map | null>(null);
@@ -121,7 +127,8 @@ export default function RouteMap({
 
     if (waypoints.length === 0) return;
 
-    // Connect last real GPS point to first waypoint
+    // Connect last real GPS point to first waypoint (always a straight "leg" since
+    // we don't know where the runner was between end-of-data and the first waypoint).
     const lastReal = points[points.length - 1];
     if (lastReal) {
       connectLineRef.current = L.polyline([lastReal, waypoints[0]], {
@@ -132,8 +139,15 @@ export default function RouteMap({
       }).addTo(map);
     }
 
-    // Extension polyline
-    if (waypoints.length >= 2) {
+    // Extension polyline — prefer the snapped (road/trail) path when available
+    const hasSnapped = snappedPath && snappedPath.length >= 2;
+    if (hasSnapped) {
+      extensionLineRef.current = L.polyline(snappedPath!, {
+        color: "#f97316",
+        weight: 3,
+        opacity: 0.9,
+      }).addTo(map);
+    } else if (waypoints.length >= 2) {
       extensionLineRef.current = L.polyline(waypoints, {
         color: "#f97316",
         weight: 3,
@@ -178,7 +192,7 @@ export default function RouteMap({
       fillColor: "#ef4444",
       fillOpacity: 1,
     }).addTo(map);
-  }, [waypoints, points, editMode, onWaypointsChange]);
+  }, [waypoints, points, editMode, onWaypointsChange, snappedPath]);
 
   // Cleanup
   useEffect(() => {
@@ -192,9 +206,9 @@ export default function RouteMap({
 
   if (points.length < 2) return null;
 
-  // Compute extension distance for display
-  let extensionDist = 0;
-  if (waypoints.length >= 2) {
+  // Compute extension distance for display — prefer snapped distance if we have one
+  let extensionDist = snappedDistance ?? 0;
+  if (!snappedDistance && waypoints.length >= 2) {
     for (let i = 1; i < waypoints.length; i++) {
       extensionDist += haversineDistance(
         waypoints[i - 1][0], waypoints[i - 1][1],
