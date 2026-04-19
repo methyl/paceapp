@@ -1,0 +1,26 @@
+name = "paceapp"
+compatibility_date = "2025-01-15"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "./dist"
+
+[vars]
+APP_URL = "https://paceapp.pages.dev/"
+MAGIC_FROM = "auth@paceapp.example.com"
+MAGIC_FROM_NAME = "PaceApp"
+MAGIC_TTL_SECONDS = "900"
+SESSION_TTL_SECONDS = "2592000"
+COOKIE_DOMAIN = ""
+DEV_RETURN_MAGIC_LINK = "false"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "paceapp"
+database_id = "5a4bd2b8-51f1-45f7-8cb6-dc5de0c00daa"
+migrations_dir = "workers/migrations"
+
+[[r2_buckets]]
+binding = "FIT_BUCKET"
+bucket_name = "paceapp-fit"
+
+[[send_email]]
+name = "EMAIL"

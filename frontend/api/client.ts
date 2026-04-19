@@ -1,8 +1,6 @@
-// API client for the PaceApp Cloudflare Worker backend.
-// Base URL is read from VITE_API_BASE; in dev it's the vite proxy prefix "/api",
-// in production it points at the deployed Worker origin.
+// Frontend and Pages Functions API are same-origin; "/api" works everywhere.
 
-const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api";
+const API_BASE = "/api";
 
 export interface RemoteUser {
   id: string;
