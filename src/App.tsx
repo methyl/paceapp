@@ -14,11 +14,15 @@ import LibraryMap from "./components/LibraryMap";
 import RunExtension from "./components/RunExtension";
 import { useSnappedRoute } from "./routing";
 import { parseFitFile, reprocessActivity } from "./parseFit";
-import { loadActivities, saveActivities, clearActivities } from "./storage";
+import { loadActivities, saveActivities, clearActivities, saveFitBlob } from "./storage";
 import { exportActivityToFit, downloadFitFile } from "./exportFit";
 import { getZ2Ceiling, setZ2Ceiling } from "./detectWorkout";
 import type { ParsedActivity, WorkoutType } from "./types";
 import { WORKOUT_LABELS, WORKOUT_COLORS } from "./types";
+import { useAuth } from "./api/useAuth";
+import { useSync } from "./api/useSync";
+import AuthBar from "./components/AuthBar";
+import SyncPanel from "./components/SyncPanel";
 
 type View = "library" | "detail" | "compare" | "pace" | "fitness";
 
@@ -38,6 +42,10 @@ function App() {
   // so handleConfirm() can pass it into synthesizeRecords.
   const snappedExtension = useSnappedRoute(extensionWaypoints);
   const [timeRange, setTimeRange] = useState<string>("all");
+
+  const auth = useAuth();
+  const loggedIn = !!auth.user;
+  const sync = useSync(loggedIn);
 
   const isRunning = (a: ParsedActivity) =>
     !a.summary.sport || a.summary.sport === "running" || a.summary.sport === "trail_running";
@@ -101,6 +109,8 @@ function App() {
         try {
           const activity = await parseFitFile(f.buffer, f.name);
           parsed.push(activity);
+          // Persist raw FIT bytes so cloud sync can upload the original later.
+          saveFitBlob(f.name, f.buffer).catch(() => {});
         } catch {
           failed++;
         }
@@ -180,6 +190,7 @@ function App() {
             </span>
           </button>
 
+          <div className="flex items-center gap-4">
           {activities.length > 0 && (
             <nav className="flex items-center gap-2">
             <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
@@ -258,6 +269,13 @@ function App() {
             </div>
             </nav>
           )}
+          <AuthBar
+            user={auth.user}
+            loading={auth.loading}
+            onRequestLink={auth.requestLink}
+            onLogout={auth.logout}
+          />
+          </div>
         </div>
       </header>
 
@@ -312,6 +330,15 @@ function App() {
                 <FileUpload onFilesLoaded={handleFiles} multiple />
               </div>
             </div>
+            <SyncPanel
+              loggedIn={loggedIn}
+              localCount={activities.length}
+              remote={sync.remote}
+              progress={sync.progress}
+              error={sync.remoteError}
+              onImportAll={() => sync.importAll(activities)}
+              onImportAllForce={() => sync.importAll(activities, { force: true })}
+            />
             <LibraryMap activities={runningActivities} onSelect={handleSelectActivity} />
             <ActivityList
               activities={runningActivities}
