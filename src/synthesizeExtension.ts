@@ -1,4 +1,5 @@
-import type { RecordPoint } from "./types";
+import type { LapSummary, RecordPoint } from "./types";
+import { speedToPace } from "./parseFit";
 
 const R = 6371000; // Earth radius in meters
 
@@ -53,6 +54,110 @@ export function interpolateAlongPolyline(
     result.push(last);
   }
 
+  return result;
+}
+
+/**
+ * Return the auto-lap distance in meters if the original activity's laps
+ * look like uniform auto-laps (every full lap within ~3% of the mean),
+ * otherwise null.
+ */
+export function detectAutoLapDistance(laps: LapSummary[]): number | null {
+  if (laps.length < 2) return null;
+  // Ignore the final lap — typically a partial trailing lap.
+  const full = laps.slice(0, -1);
+  if (full.length < 2) return null;
+  const distances = full.map((l) => l.totalDistance).filter((d) => d > 0);
+  if (distances.length < 2) return null;
+  const mean = distances.reduce((s, d) => s + d, 0) / distances.length;
+  if (mean < 400) return null;
+  const maxDev = Math.max(...distances.map((d) => Math.abs(d - mean)));
+  if (maxDev / mean < 0.03) return mean;
+  return null;
+}
+
+/**
+ * Split a run of records into chunks whose cumulative distance equals
+ * `chunkDist`. The final chunk may be shorter (partial lap).
+ */
+export function splitRecordsByDistance(
+  records: RecordPoint[],
+  chunkDist: number,
+): RecordPoint[][] {
+  if (records.length === 0 || chunkDist <= 0) return [records];
+  const chunks: RecordPoint[][] = [];
+  const startDist = records[0].distance;
+  let chunkStart = 0;
+  let nextBoundary = startDist + chunkDist;
+
+  for (let i = 1; i < records.length; i++) {
+    if (records[i].distance >= nextBoundary) {
+      chunks.push(records.slice(chunkStart, i + 1));
+      chunkStart = i;
+      nextBoundary = records[i].distance + chunkDist;
+    }
+  }
+  if (chunkStart < records.length - 1) {
+    chunks.push(records.slice(chunkStart));
+  }
+  return chunks.length > 0 ? chunks : [records];
+}
+
+/**
+ * Build LapSummary entries for synthetic extension records so the app's
+ * lap table (and anything else that reads `activity.laps`) reflects the
+ * extension. If the original activity used uniform auto-laps, the extension
+ * is split into matching chunks; otherwise one summary lap is produced.
+ */
+export function buildExtensionLaps(
+  extRecords: RecordPoint[],
+  existingLaps: LapSummary[],
+): LapSummary[] {
+  if (extRecords.length < 2) return [];
+  const autoLapDist = detectAutoLapDistance(existingLaps);
+  const chunks = autoLapDist
+    ? splitRecordsByDistance(extRecords, autoLapDist)
+    : [extRecords];
+
+  const result: LapSummary[] = [];
+  let idx = existingLaps.length + 1;
+  for (const chunk of chunks) {
+    if (chunk.length < 2) continue;
+    const first = chunk[0];
+    const last = chunk[chunk.length - 1];
+    const dist = last.distance - first.distance;
+    const time = last.elapsed - first.elapsed;
+    if (dist <= 0 || time <= 0) continue;
+
+    const avg = (vals: (number | undefined)[]): number | undefined => {
+      const v = vals.filter((x): x is number => x != null);
+      return v.length > 0 ? v.reduce((s, x) => s + x, 0) / v.length : undefined;
+    };
+    const max = (vals: (number | undefined)[]): number | undefined => {
+      const v = vals.filter((x): x is number => x != null);
+      return v.length > 0 ? Math.max(...v) : undefined;
+    };
+
+    const avgSpeed = dist / time;
+    result.push({
+      lapIndex: idx,
+      startTime: first.timestamp,
+      totalDistance: dist,
+      totalElapsedTime: time,
+      avgHeartRate: avg(chunk.map((r) => r.heartRate)),
+      maxHeartRate: max(chunk.map((r) => r.heartRate)),
+      avgCadence: avg(chunk.map((r) => r.cadence)),
+      avgSpeed,
+      avgPace: speedToPace(avgSpeed),
+      avgVerticalOscillation: avg(chunk.map((r) => r.verticalOscillation)),
+      avgGroundContactTime: avg(chunk.map((r) => r.groundContactTime)),
+      avgGroundContactTimeBalance: avg(chunk.map((r) => r.groundContactTimeBalance)),
+      avgStrideLength: avg(chunk.map((r) => r.strideLength)),
+      avgVerticalRatio: avg(chunk.map((r) => r.verticalRatio)),
+      avgPower: avg(chunk.map((r) => r.power)),
+    });
+    idx++;
+  }
   return result;
 }
 

@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import type { ParsedActivity } from "../types";
-import { haversineDistance, synthesizeRecords } from "../synthesizeExtension";
+import { buildExtensionLaps, haversineDistance, synthesizeRecords } from "../synthesizeExtension";
 import { speedToPace, formatTime } from "../parseFit";
 import type { SnappedRoute } from "../routing";
 
@@ -126,11 +126,14 @@ export default function RunExtension({
 
     const mergedRecords = [...activity.records, ...synthetic];
     const lastMerged = mergedRecords[mergedRecords.length - 1];
+    const extensionLaps = buildExtensionLaps(synthetic, activity.laps);
 
     const extended: ParsedActivity = {
       ...activity,
       records: mergedRecords,
+      laps: [...activity.laps, ...extensionLaps],
       originalRecordCount: activity.records.length,
+      originalLapCount: activity.laps.length,
       extended: true,
       summary: {
         ...activity.summary,
@@ -164,8 +167,13 @@ export default function RunExtension({
             const original: ParsedActivity = {
               ...activity,
               records: activity.records.slice(0, activity.originalRecordCount),
+              laps:
+                activity.originalLapCount != null
+                  ? activity.laps.slice(0, activity.originalLapCount)
+                  : activity.laps,
               extended: false,
               originalRecordCount: undefined,
+              originalLapCount: undefined,
             };
             onUndo(original);
           }}
