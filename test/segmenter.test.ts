@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { parseFitFile } from "../src/parseFit";
-import { isAutoLap } from "../src/segmenter";
+import { parseFitFile } from "../frontend/parseFit";
+import { isAutoLap } from "../frontend/segmenter";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, "fixtures");

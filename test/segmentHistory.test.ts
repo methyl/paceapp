@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { parseFitFile } from "../src/parseFit";
-import { groupCurrentSegments, findHistoricalPoints } from "../src/segmentHistory";
+import { parseFitFile } from "../frontend/parseFit";
+import { groupCurrentSegments, findHistoricalPoints } from "../frontend/segmentHistory";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, "fixtures");

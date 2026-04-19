@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { parseFitFile } from "../src/parseFit";
-import { computePriorLoad } from "../src/fitness";
+import { parseFitFile } from "../frontend/parseFit";
+import { computePriorLoad } from "../frontend/fitness";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, "fixtures");

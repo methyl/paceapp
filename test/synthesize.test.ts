@@ -5,8 +5,8 @@ import {
   analyzeRecentTrend,
   synthesizeRecords,
   buildExtensionLaps,
-} from "../src/synthesizeExtension";
-import type { LapSummary, RecordPoint } from "../src/types";
+} from "../frontend/synthesizeExtension";
+import type { LapSummary, RecordPoint } from "../frontend/types";
 
 function makeRecords(count: number, startLat = 51.11, startLng = 17.05): RecordPoint[] {
   const records: RecordPoint[] = [];

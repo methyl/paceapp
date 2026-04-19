@@ -3,10 +3,10 @@ import { readFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { Decoder, Stream } from "@garmin/fitsdk";
-import { parseFitFile, reprocessActivity } from "../src/parseFit";
-import { exportActivityToFit } from "../src/exportFit";
-import { buildExtensionLaps, synthesizeRecords } from "../src/synthesizeExtension";
-import type { ParsedActivity } from "../src/types";
+import { parseFitFile, reprocessActivity } from "../frontend/parseFit";
+import { exportActivityToFit } from "../frontend/exportFit";
+import { buildExtensionLaps, synthesizeRecords } from "../frontend/synthesizeExtension";
+import type { ParsedActivity } from "../frontend/types";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, "fixtures");

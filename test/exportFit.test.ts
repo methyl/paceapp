@@ -3,8 +3,8 @@ import { readFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { Decoder, Stream } from "@garmin/fitsdk";
-import { parseFitFile } from "../src/parseFit";
-import { exportActivityToFit } from "../src/exportFit";
+import { parseFitFile } from "../frontend/parseFit";
+import { exportActivityToFit } from "../frontend/exportFit";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, "fixtures");
