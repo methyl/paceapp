@@ -25,6 +25,27 @@ function parseTimeInput(input: string): number | null {
   return null;
 }
 
+function parseClockInput(input: string, startMs: number): number | null {
+  const parts = input.trim().split(":").map(Number);
+  if (parts.length < 2 || parts.length > 3 || parts.some(isNaN)) return null;
+  const [h, m, s = 0] = parts;
+  if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) return null;
+  const finish = new Date(startMs);
+  finish.setHours(h, m, s, 0);
+  let finishMs = finish.getTime();
+  // If the entered clock time is at or before the start, assume the next day.
+  while (finishMs <= startMs) finishMs += 24 * 3600 * 1000;
+  return (finishMs - startMs) / 1000;
+}
+
+function formatClockInput(ms: number): string {
+  const d = new Date(ms);
+  const hh = d.getHours().toString().padStart(2, "0");
+  const mm = d.getMinutes().toString().padStart(2, "0");
+  const ss = d.getSeconds().toString().padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
 function getActivityStartMs(activity: ParsedActivity): number | null {
   const iso = activity.summary.startTime ?? activity.records[0]?.timestamp;
   if (!iso) return null;
@@ -59,6 +80,7 @@ export default function RunExtension({
     onEditModeChange(m === "drawing");
   };
   const [timeInput, setTimeInput] = useState("");
+  const [clockInput, setClockInput] = useState("");
   const [error, setError] = useState("");
 
   const hasGps = activity.records.some((r) => r.lat != null);
@@ -91,6 +113,32 @@ export default function RunExtension({
     finishTime != null && startMs != null
       ? formatClockTime(startMs + finishTime * 1000, startMs)
       : null;
+
+  const handleTimeInputChange = (val: string) => {
+    setTimeInput(val);
+    if (startMs == null) return;
+    if (val.trim() === "") {
+      setClockInput("");
+      return;
+    }
+    const parsed = parseTimeInput(val);
+    if (parsed != null) {
+      setClockInput(formatClockInput(startMs + parsed * 1000));
+    }
+  };
+
+  const handleClockInputChange = (val: string) => {
+    setClockInput(val);
+    if (startMs == null) return;
+    if (val.trim() === "") {
+      setTimeInput("");
+      return;
+    }
+    const secs = parseClockInput(val, startMs);
+    if (secs != null) {
+      setTimeInput(formatTime(secs));
+    }
+  };
 
   const handlePreview = () => {
     setError("");
@@ -145,12 +193,14 @@ export default function RunExtension({
     setMode("idle");
     onWaypointsChange([]);
     setTimeInput("");
+    setClockInput("");
   };
 
   const handleCancel = () => {
     setMode("idle");
     onWaypointsChange([]);
     setTimeInput("");
+    setClockInput("");
     setError("");
   };
 
@@ -213,19 +263,29 @@ export default function RunExtension({
               <input
                 type="text"
                 value={timeInput}
-                onChange={(e) => setTimeInput(e.target.value)}
+                onChange={(e) => handleTimeInputChange(e.target.value)}
                 placeholder="H:MM:SS or MM:SS"
                 className="border border-gray-300 rounded px-2 py-1.5 text-sm w-32"
               />
               <div className="text-[10px] text-gray-500 mt-0.5">
                 Current: {formatTime(currentElapsed)}
               </div>
-              {finishClock && (
-                <div className="text-[10px] text-gray-600 mt-0.5">
-                  Finish at: <span className="font-medium">{finishClock}</span>
-                </div>
-              )}
             </div>
+
+            {startMs != null && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Finish at (clock)
+                </label>
+                <input
+                  type="text"
+                  value={clockInput}
+                  onChange={(e) => handleClockInputChange(e.target.value)}
+                  placeholder="HH:MM:SS"
+                  className="border border-gray-300 rounded px-2 py-1.5 text-sm w-28"
+                />
+              </div>
+            )}
 
             {extensionDist > 0 && (
               <div className="text-xs text-gray-600">
