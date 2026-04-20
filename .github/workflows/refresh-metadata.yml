@@ -1,0 +1,48 @@
+name: Refresh MCP metadata
+
+# Calls the refresh_metadata MCP tool so every row's `meta` blob is
+# recomputed from the parsed activity JSON in R2. Runs after a successful
+# deploy (so a newly-added ActivityMeta field gets backfilled) and can be
+# triggered manually.
+#
+# Required secrets:
+#   PACEAPP_URL        e.g. https://paceapp.pages.dev
+#   PACEAPP_MCP_TOKEN  Bearer token minted via /tokens in the app
+
+on:
+  workflow_run:
+    workflows: ["Deploy to Cloudflare Pages"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      only_missing:
+        description: "Only touch rows whose meta is empty"
+        type: boolean
+        default: true
+
+jobs:
+  refresh:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call refresh_metadata via MCP
+        env:
+          PACEAPP_URL: ${{ secrets.PACEAPP_URL }}
+          PACEAPP_MCP_TOKEN: ${{ secrets.PACEAPP_MCP_TOKEN }}
+          ONLY_MISSING: ${{ github.event.inputs.only_missing != 'false' }}
+        run: |
+          set -euo pipefail
+          payload=$(jq -n --argjson only_missing "$ONLY_MISSING" '{
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: { name: "refresh_metadata", arguments: { only_missing: $only_missing } }
+          }')
+          response=$(curl -fsSL -X POST "$PACEAPP_URL/mcp" \
+            -H "Authorization: Bearer $PACEAPP_MCP_TOKEN" \
+            -H "content-type: application/json" \
+            -d "$payload")
+          echo "$response" | jq .
+          echo "$response" | jq -e '.error == null' > /dev/null
+          echo "$response" | jq -r '.result.content[0].text' | jq .
