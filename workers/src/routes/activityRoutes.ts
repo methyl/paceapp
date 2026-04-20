@@ -264,6 +264,24 @@ interface ParsedMeta {
   meta: ActivityMeta;
 }
 
+/**
+ * Derive the flexible ActivityMeta blob from a parsed ParsedActivity JSON.
+ * Used on upload and by the refresh_metadata MCP tool to backfill existing
+ * rows. Extend here to add new fields — no schema migration required.
+ */
+export function deriveMeta(obj: unknown): ActivityMeta {
+  const a = obj as {
+    workoutLabel?: string;
+    records?: Array<{ altitude?: number }>;
+  };
+  const meta: ActivityMeta = {};
+  if (typeof a?.workoutLabel === "string") meta.workoutLabel = a.workoutLabel;
+  const { ascent, descent } = elevationFromRecords(a?.records);
+  if (ascent != null) meta.totalAscent = ascent;
+  if (descent != null) meta.totalDescent = descent;
+  return meta;
+}
+
 function extractMeta(obj: unknown, _fileName: string): ParsedMeta {
   const a = obj as {
     summary?: {
@@ -273,21 +291,14 @@ function extractMeta(obj: unknown, _fileName: string): ParsedMeta {
       totalElapsedTime?: number;
     };
     workoutType?: string;
-    workoutLabel?: string;
-    records?: Array<{ altitude?: number }>;
   };
-  const meta: ActivityMeta = {};
-  if (typeof a?.workoutLabel === "string") meta.workoutLabel = a.workoutLabel;
-  const { ascent, descent } = elevationFromRecords(a?.records);
-  if (ascent != null) meta.totalAscent = ascent;
-  if (descent != null) meta.totalDescent = descent;
   return {
     startTime: a?.summary?.startTime ?? null,
     sport: a?.summary?.sport ?? null,
     workoutType: a?.workoutType ?? null,
     totalDistance: numOrNull(a?.summary?.totalDistance),
     totalElapsedTime: numOrNull(a?.summary?.totalElapsedTime),
-    meta,
+    meta: deriveMeta(obj),
   };
 }
 
