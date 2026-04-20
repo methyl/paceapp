@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import { json, error } from "../http";
 import { getUserFromRequest } from "../auth";
+import { type ActivityMeta, deriveMeta, parseMeta } from "../meta";
 
 const MAX_FIT_BYTES = 20 * 1024 * 1024; // 20 MB per FIT file
 const MAX_JSON_BYTES = 30 * 1024 * 1024; // 30 MB parsed JSON
@@ -245,16 +246,6 @@ export async function deleteActivity(
   return json({ ok: true });
 }
 
-/**
- * Flexible metadata extracted from the parsed activity JSON. Stored as a
- * JSON blob in the `meta` column — add new fields here without migrations.
- */
-export interface ActivityMeta {
-  workoutLabel?: string;
-  totalAscent?: number;
-  totalDescent?: number;
-}
-
 interface ParsedMeta {
   startTime: string | null;
   sport: string | null;
@@ -262,24 +253,6 @@ interface ParsedMeta {
   totalDistance: number | null;
   totalElapsedTime: number | null;
   meta: ActivityMeta;
-}
-
-/**
- * Derive the flexible ActivityMeta blob from a parsed ParsedActivity JSON.
- * Used on upload and by the refresh_metadata MCP tool to backfill existing
- * rows. Extend here to add new fields — no schema migration required.
- */
-export function deriveMeta(obj: unknown): ActivityMeta {
-  const a = obj as {
-    workoutLabel?: string;
-    records?: Array<{ altitude?: number }>;
-  };
-  const meta: ActivityMeta = {};
-  if (typeof a?.workoutLabel === "string") meta.workoutLabel = a.workoutLabel;
-  const { ascent, descent } = elevationFromRecords(a?.records);
-  if (ascent != null) meta.totalAscent = ascent;
-  if (descent != null) meta.totalDescent = descent;
-  return meta;
 }
 
 function extractMeta(obj: unknown, _fileName: string): ParsedMeta {
@@ -300,41 +273,6 @@ function extractMeta(obj: unknown, _fileName: string): ParsedMeta {
     totalElapsedTime: numOrNull(a?.summary?.totalElapsedTime),
     meta: deriveMeta(obj),
   };
-}
-
-export function parseMeta(raw: string | null | undefined): ActivityMeta {
-  if (!raw) return {};
-  try {
-    const v = JSON.parse(raw);
-    return v && typeof v === "object" ? (v as ActivityMeta) : {};
-  } catch {
-    return {};
-  }
-}
-
-function elevationFromRecords(
-  records: Array<{ altitude?: number }> | undefined,
-): { ascent: number | null; descent: number | null } {
-  if (!Array.isArray(records) || records.length < 2) {
-    return { ascent: null, descent: null };
-  }
-  let ascent = 0;
-  let descent = 0;
-  let sawAltitude = false;
-  let prev: number | null = null;
-  for (const r of records) {
-    const a = r?.altitude;
-    if (typeof a !== "number" || !Number.isFinite(a)) continue;
-    sawAltitude = true;
-    if (prev != null) {
-      const d = a - prev;
-      if (d > 0) ascent += d;
-      else descent -= d;
-    }
-    prev = a;
-  }
-  if (!sawAltitude) return { ascent: null, descent: null };
-  return { ascent, descent };
 }
 
 function numOrNull(v: unknown): number | null {

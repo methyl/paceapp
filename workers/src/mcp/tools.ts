@@ -1,7 +1,7 @@
 import type { Env } from "../env";
 import type { User } from "../auth";
 import { findMatches, type Reference, type LoadCategory } from "./matching";
-import { parseMeta, deriveMeta, type ActivityMeta } from "../routes/activityRoutes";
+import { parseMeta, deriveMeta } from "../meta";
 
 export const TOOL_DEFINITIONS = [
   {
@@ -33,21 +33,6 @@ export const TOOL_DEFINITIONS = [
           items: { enum: ["summary", "laps", "segments", "records"] },
           description: "Which sections to include; default: summary + laps + segments.",
         },
-      },
-    },
-  },
-  {
-    name: "refresh_metadata",
-    description:
-      "Recompute the meta blob (workout label, elevation gain/loss, …) for the user's activities from their parsed JSON in R2. Useful after adding a new metadata field or for rows uploaded before the field existed.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        only_missing: {
-          type: "boolean",
-          description: "If true (default), only touch rows whose meta is NULL or empty.",
-        },
-        limit: { type: "number", description: "Max rows to process (default 500)" },
       },
     },
   },
@@ -89,8 +74,6 @@ export async function callTool(
       return listActivities(args, env, user);
     case "get_activity":
       return getActivity(args, env, user);
-    case "refresh_metadata":
-      return refreshMetadata(args, env, user);
     case "similar_intervals":
       return similarIntervals(args, env, user);
     default:
@@ -201,59 +184,6 @@ async function getActivity(
   if (parts.has("segments")) out.segments = full.segments;
   if (parts.has("records")) out.records = full.records;
   return out;
-}
-
-async function refreshMetadata(
-  args: Record<string, unknown>,
-  env: Env,
-  user: User,
-) {
-  const onlyMissing = args.only_missing !== false;
-  const limit = Math.min(Number(args.limit) || 500, 2000);
-
-  const clauses = ["user_id = ?1"];
-  if (onlyMissing) clauses.push("(meta IS NULL OR meta = '' OR meta = '{}')");
-
-  const rows = await env.DB.prepare(
-    `SELECT id, json_r2_key, meta
-     FROM activities
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY COALESCE(start_time, '') DESC
-     LIMIT ${limit}`,
-  )
-    .bind(user.id)
-    .all<{ id: string; json_r2_key: string; meta: string | null }>();
-
-  const candidates = rows.results ?? [];
-  let updated = 0;
-  let missingBlob = 0;
-  let noChange = 0;
-  const sampled: Array<{ id: string; meta: ActivityMeta }> = [];
-
-  for (const r of candidates) {
-    const obj = await env.FIT_BUCKET.get(r.json_r2_key);
-    if (!obj) { missingBlob++; continue; }
-    const full = (await obj.json()) as Record<string, unknown>;
-    const next = deriveMeta(full);
-    const nextJson = JSON.stringify(next);
-    if (nextJson === (r.meta ?? null)) { noChange++; continue; }
-    await env.DB.prepare(
-      "UPDATE activities SET meta = ?1 WHERE id = ?2 AND user_id = ?3",
-    )
-      .bind(nextJson, r.id, user.id)
-      .run();
-    updated++;
-    if (sampled.length < 5) sampled.push({ id: r.id, meta: next });
-  }
-
-  return {
-    scanned: candidates.length,
-    updated,
-    unchanged: noChange,
-    missing_blob: missingBlob,
-    only_missing: onlyMissing,
-    sample: sampled,
-  };
 }
 
 async function similarIntervals(

@@ -28,6 +28,14 @@ jobs:
           workingDirectory: workers/email
           command: deploy
 
+      - name: Deploy backfill worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/backfill
+          command: deploy
+
       - name: Apply D1 migrations
         uses: cloudflare/wrangler-action@v3
         with:
