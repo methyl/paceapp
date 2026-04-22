@@ -23,7 +23,7 @@ import {
 } from "./storage";
 import { api } from "./api/client";
 import { exportActivityToFit, downloadFitFile } from "./exportFit";
-import { getZ2Ceiling, setZ2Ceiling } from "./detectWorkout";
+import { getZ2Ceiling, setZ2Ceiling, setActiveZones } from "./detectWorkout";
 import type { ParsedActivity } from "./types";
 import { WORKOUT_LABELS, WORKOUT_COLORS } from "./types";
 import { useAuth } from "./api/useAuth";
@@ -67,6 +67,22 @@ function App() {
   const auth = useAuth();
   const loggedIn = !!auth.user;
   const sync = useSync(loggedIn);
+
+  // Fetch the user's saved HR zones so client-side classification uses
+  // the same ceilings the server does. Without this, detectWorkoutType
+  // ran with localStorage Z2 while the server used hr_zones from D1 —
+  // that was the "two systems" drift. On first successful fetch we
+  // reprocess every local activity so the cached workoutType /
+  // workoutLabel reflect the server-of-truth zones.
+  useEffect(() => {
+    if (!loggedIn) { setActiveZones(null); return; }
+    api.getSettings()
+      .then((s) => {
+        setActiveZones(s.effective_zones);
+        setActivities((prev) => prev.map((a) => reprocessActivity(a)));
+      })
+      .catch(() => setActiveZones(null));
+  }, [loggedIn]);
 
   const localFileNames = useMemo(
     () => new Set(activities.map((a) => a.fileName)),

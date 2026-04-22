@@ -1,18 +1,11 @@
 /**
- * User HR zones. Four boundaries define five zones:
- *   Z1 ≤ z1_max < Z2 ≤ z2_max < Z3 ≤ z3_max < Z4 ≤ z4_max < Z5.
- *
- * Tags rely on these zones to classify intensity (easy/steady/tempo/
- * threshold/vo2/anaerobic). The values are persisted as JSON in
- * `users.hr_zones`; a null column means "auto-derive from the user's
- * activities on read" (see deriveZonesFromActivities).
+ * HrZones is the single source of truth for zone ceilings; defined in
+ * shared/ so the client and server import the exact same type. This
+ * module adds the server-only persistence helpers (JSON parse, DB
+ * fallback, auto-derive).
  */
-export interface HrZones {
-  z1_max: number;
-  z2_max: number;
-  z3_max: number;
-  z4_max: number;
-}
+import type { HrZones } from "../../shared/types";
+export type { HrZones };
 
 // Default Z2 anchor (top of easy / aerobic threshold) when no explicit
 // zones and no observation-based derivation is possible. 140 matches the

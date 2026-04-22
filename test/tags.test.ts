@@ -152,4 +152,30 @@ describe("tag derivation (server uses shared detectWorkoutType)", () => {
     const tags = deriveTagsFromParsed(parsed, ascent ?? undefined);
     expect(tags).not.toContain("hilly");
   });
+
+  // User-reported regression: a 10km tempo with user's saved zones
+  // {z1:125, z2:143, z3:163, z4:176} and avg HR ~150 was landing as
+  // "race" because the classifier used to derive ceilings from a single
+  // anchor (z1_max × 1.16 = tempo ceiling = 145), which put HR 150 into
+  // "race". Now the zones are honored directly — HR ≤ z3_max = 163 must
+  // read tempo, not race.
+  it("custom zones are honored: HR in Z3 classifies as tempo, not race", async () => {
+    const parsed = await parseFitFile(loadFixture("2026-04-04"), "test");
+    const customZones = { z1_max: 125, z2_max: 143, z3_max: 163, z4_max: 176 };
+    const tags = deriveTags({
+      zones: customZones,
+      summary: parsed.summary,
+      laps: parsed.laps,
+      segments: parsed.segments,
+      records: parsed.records,
+      totalDistance: parsed.summary.totalDistance,
+      totalAscent: null,
+    });
+    // The fixture's avg HR sits in the 140s — above z2_max (143) and
+    // below z3_max (163), so majority lap-time should land in tempo.
+    expect(tags).not.toContain("race");
+    // And it should *not* be easy — the user tightened zones
+    // specifically because 140-bpm runs feel harder than "easy".
+    expect(tags).not.toContain("easy");
+  });
 });

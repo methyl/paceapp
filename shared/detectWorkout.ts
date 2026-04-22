@@ -1,17 +1,19 @@
-import type { LapSummary, ActivitySummary, WorkoutType } from "./types";
+import type { LapSummary, ActivitySummary, WorkoutType, HrZones } from "./types";
 
 export const DEFAULT_Z2_CEILING = 140;
 
 /**
- * HR zone boundaries derived from Z2 ceiling. Z2 ceiling is the top of
- * zone 2 / aerobic threshold.
+ * Default zones when the user hasn't configured any. Anchors the four
+ * boundaries at the conventional easy/steady/tempo/threshold ratios off
+ * DEFAULT_Z2_CEILING. Callers with explicit zones (e.g. the server with
+ * the user's saved hr_zones) should pass those directly.
  */
-export function getZones(z2Ceiling: number) {
+export function defaultZonesFromAnchor(z2Ceiling: number): HrZones {
   return {
-    easy: z2Ceiling,              // below this = easy
-    steady: z2Ceiling * 1.08,     // Z2 ceiling to this = steady
-    tempo: z2Ceiling * 1.16,      // up to this = tempo/threshold
-    // above tempo = race/Z4+
+    z1_max: Math.round(z2Ceiling * 1.00),
+    z2_max: Math.round(z2Ceiling * 1.08),
+    z3_max: Math.round(z2Ceiling * 1.16),
+    z4_max: Math.round(z2Ceiling * 1.25),
   };
 }
 
@@ -22,18 +24,18 @@ export function getZones(z2Ceiling: number) {
  * 1. Intervals: actual pace variation with alternating fast/slow pattern
  * 2. Progressive: pace consistently increasing through the run
  * 3. Zone-based classification for steady efforts:
- *    - Easy: majority HR < Z2 ceiling
- *    - Steady: majority HR in low Z3
- *    - Tempo: majority HR in high Z3
- *    - Race: majority HR in Z4+
+ *    - Easy: majority HR ≤ zones.z1_max
+ *    - Steady: majority HR in z1_max..z2_max
+ *    - Tempo: majority HR in z2_max..z3_max
+ *    - Race: majority HR > z3_max
  *
- * Pure function — caller supplies z2Ceiling so this runs unchanged on
+ * Pure function — caller supplies zones so this runs unchanged on
  * the server. The frontend wraps it with a localStorage-backed default.
  */
 export function detectWorkoutType(
   _summary: ActivitySummary,
   laps: LapSummary[],
-  z2Ceiling: number = DEFAULT_Z2_CEILING,
+  zones: HrZones = defaultZonesFromAnchor(DEFAULT_Z2_CEILING),
 ): WorkoutType {
   const meaningful = laps.filter(
     (l) => l.totalDistance > 50 && l.avgSpeed != null && l.avgSpeed > 0
@@ -61,7 +63,6 @@ export function detectWorkoutType(
   }
 
   // --- Zone-based classification: HR is the most reliable signal ---
-  const zones = getZones(z2Ceiling);
   const lapsWithHR = meaningful.filter((l) => l.avgHeartRate != null);
 
   if (lapsWithHR.length >= 2) {
@@ -88,12 +89,12 @@ export function detectWorkoutType(
 }
 
 /**
- * Classify a run by the HR zone where most time is spent.
+ * Classify a run by the HR zone where most time is spent. Uses the
+ * user's actual zone ceilings directly (no derived multipliers), so
+ * callers whose saved zones differ from the default get the expected
+ * breakpoints.
  */
-function classifyByZone(
-  laps: LapSummary[],
-  zones: { easy: number; steady: number; tempo: number }
-): WorkoutType {
+function classifyByZone(laps: LapSummary[], zones: HrZones): WorkoutType {
   let easyTime = 0;
   let steadyTime = 0;
   let tempoTime = 0;
@@ -107,13 +108,16 @@ function classifyByZone(
 
     if (hr == null) {
       easyTime += t; // no HR data, assume easy
-    } else if (hr <= zones.easy) {
+    } else if (hr <= zones.z1_max) {
       easyTime += t;
-    } else if (hr <= zones.steady) {
+    } else if (hr <= zones.z2_max) {
       steadyTime += t;
-    } else if (hr <= zones.tempo) {
+    } else if (hr <= zones.z3_max) {
       tempoTime += t;
     } else {
+      // Anything above the Z3 ceiling — tempo/threshold territory and
+      // beyond — reads as "race" in the coarse 4-bucket output. The
+      // multi-tag layer can refine this further if needed.
       raceTime += t;
     }
   }

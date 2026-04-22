@@ -44,10 +44,10 @@ export function deriveTags(input: DeriveTagsInput): string[] {
   const tags = new Set<string>();
 
   // Primary tag comes from the exact same classifier the client runs
-  // for its label string. z1_max doubles as the Z2 ceiling in the
-  // zone-anchor scheme (easy ceiling = top of Z2), which is what the
-  // client's detectWorkoutType expects.
-  const primary = detectWorkoutType(input.summary, input.laps, input.zones.z1_max);
+  // for its label string. Passing the user's actual HrZones (not a
+  // derived single anchor) means the server and client agree on the
+  // breakpoints even when the user has configured custom ceilings.
+  const primary = detectWorkoutType(input.summary, input.laps, input.zones);
   if (primary && primary !== "unknown") tags.add(primary);
 
   // Structure refinements beyond what the single WorkoutType captures.

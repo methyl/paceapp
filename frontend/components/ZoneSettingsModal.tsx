@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type HrZones, type UserSettings } from "../api/client";
+import { setActiveZones } from "../detectWorkout";
 
 interface Props {
   open: boolean;
@@ -46,6 +47,7 @@ export default function ZoneSettingsModal({ open, onClose }: Props) {
       const res = await api.updateSettings(next);
       setSettings({ hr_zones: res.hr_zones, effective_zones: res.effective_zones });
       setDraft(res.hr_zones ?? res.effective_zones);
+      setActiveZones(res.effective_zones);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "failed to save");
     } finally {

@@ -2,6 +2,19 @@
 // classification code. Anything frontend-only (UI colors, ParsedActivity
 // shape) stays in frontend/types.ts.
 
+/**
+ * User-configurable HR zone ceilings. Four boundaries define five
+ * zones: Z1 ≤ z1_max < Z2 ≤ z2_max < Z3 ≤ z3_max < Z4 ≤ z4_max < Z5.
+ * The classifier uses z1/z2/z3_max directly as the easy/steady/tempo
+ * ceilings — no derived multipliers.
+ */
+export interface HrZones {
+  z1_max: number;
+  z2_max: number;
+  z3_max: number;
+  z4_max: number;
+}
+
 export type WorkoutType =
   | "easy"
   | "steady"
