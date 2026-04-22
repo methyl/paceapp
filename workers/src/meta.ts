@@ -5,7 +5,7 @@
  * deriveMeta's output shape changes — the backfill sweep will re-derive
  * every row whose stored meta_version is behind.
  */
-export const META_VERSION = 3;
+export const META_VERSION = 4;
 
 export interface ActivityMeta {
   workoutLabel?: string;

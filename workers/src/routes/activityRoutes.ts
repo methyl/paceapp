@@ -126,10 +126,12 @@ export async function uploadActivity(req: Request, env: Env): Promise<Response> 
 
   const metaJson = JSON.stringify(parsedMeta.meta);
   const zones = await loadUserZones(env, user.id);
+  const lapsIn = (parsedObj.laps as Parameters<typeof deriveTags>[0]["laps"]) ?? [];
+  const segsIn = (parsedObj.segments as Parameters<typeof deriveTags>[0]["segments"]) ?? lapsIn;
   const tags = deriveTags({
     zones,
-    laps: (parsedObj.segments as Parameters<typeof deriveTags>[0]["laps"]) ??
-          (parsedObj.laps as Parameters<typeof deriveTags>[0]["laps"]) ?? [],
+    laps: lapsIn,
+    segments: segsIn,
     records: (parsedObj.records as Parameters<typeof deriveTags>[0]["records"]) ?? [],
     totalDistance: parsedMeta.totalDistance ?? 0,
     totalAscent: parsedMeta.meta.totalAscent ?? null,

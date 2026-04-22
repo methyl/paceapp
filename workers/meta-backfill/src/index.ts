@@ -116,9 +116,12 @@ async function buildWrites(
       .first<{ hr_zones: string | null }>();
     const zones = parseZones(userRow?.hr_zones) ?? fallbackZones();
 
+    const laps = (full.laps ?? []) as unknown as Parameters<typeof deriveTags>[0]["laps"];
+    const segments = (full.segments ?? full.laps ?? []) as unknown as Parameters<typeof deriveTags>[0]["segments"];
     const tags = deriveTags({
       zones,
-      laps: (full.segments ?? full.laps ?? []) as unknown as Parameters<typeof deriveTags>[0]["laps"],
+      laps,
+      segments,
       records: (full.records ?? []) as unknown as Parameters<typeof deriveTags>[0]["records"],
       totalDistance: typeof full.summary?.totalDistance === "number" ? full.summary.totalDistance : 0,
       totalAscent: meta.totalAscent ?? null,

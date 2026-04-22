@@ -19,7 +19,12 @@ import type { HrZones } from "./zones";
 
 export interface DeriveTagsInput {
   zones: HrZones;
+  /** Native FIT laps — drives intensity classification so the result
+   *  matches the client-side detector one-for-one. */
   laps: LapSummary[];
+  /** Effort-detected segments (set to laps when the client didn't
+   *  detect any). Drives interval/strides/hill-intervals detection. */
+  segments: LapSummary[];
   records: RecordPoint[];
   totalDistance: number;
   totalAscent: number | null;
@@ -48,13 +53,28 @@ const HILLY_MIN_TOTAL_ASCENT_M = 100;
 export function deriveTags(input: DeriveTagsInput): string[] {
   const tags = new Set<string>();
 
-  const intensity = classifyIntensity(input);
+  // Interval/strides/hill-intervals detection runs over effort-segments
+  // (finer-grained than native laps when autodetected).
+  const fastSegs = findFastReps(input.segments);
+  const isStrides = fastSegs.length >= 2 && areRepsShortStrides(fastSegs);
+
+  // Intensity classification runs over native FIT laps so it agrees
+  // with the client's detectWorkoutType, which uses the same input. For
+  // strides workouts we additionally drop any lap whose effort window
+  // overlaps the detected strides — a 15s burst inside an otherwise
+  // easy km shouldn't drag the km-lap into "steady".
+  const baseLaps = isStrides
+    ? filterOutStrideLaps(input.laps, fastSegs)
+    : input.laps;
+  const intensity = classifyIntensity({ ...input, laps: baseLaps });
   if (intensity) tags.add(intensity);
 
-  const fastSegs = findFastReps(input.laps);
   if (fastSegs.length >= 2) {
-    tags.add("intervals");
-    if (areRepsShortStrides(fastSegs)) tags.add("strides");
+    // Strides and intervals are mutually exclusive labels — strides is
+    // a specific subtype of interval-like structure, not an additional
+    // modifier on top of "intervals".
+    if (isStrides) tags.add("strides");
+    else tags.add("intervals");
     if (areRepsUphill(fastSegs, input.records)) tags.add("hill-intervals");
 
     // Hard reps @ Z5 effort — refine intensity by rep duration.
@@ -65,7 +85,9 @@ export function deriveTags(input: DeriveTagsInput): string[] {
     }
   }
 
-  if (isProgressive(input.laps)) tags.add("progressive");
+  // Progressive looks at a whole-run trend — strides at the end would
+  // always trip it, so we use the stride-free laps here too.
+  if (isProgressive(baseLaps)) tags.add("progressive");
 
   if (isHilly(input.totalDistance, input.totalAscent)) tags.add("hilly");
 
@@ -143,6 +165,32 @@ function findFastReps(laps: LapSummary[]): LapSummary[] {
   if (alternations / (above.length - 1) < 0.5) return [];
 
   return fast;
+}
+
+/**
+ * Drop any native lap whose time window overlaps one of the detected
+ * stride segments. Autolap splits (per-km) will typically contain a
+ * handful of strides within an otherwise easy km — excluding those
+ * laps keeps the intensity classification on the true easy portion.
+ */
+function filterOutStrideLaps(laps: LapSummary[], strides: LapSummary[]): LapSummary[] {
+  if (strides.length === 0) return laps;
+  const windows: Array<[number, number]> = [];
+  for (const s of strides) {
+    if (!s.startTime) continue;
+    const start = new Date(s.startTime).getTime();
+    windows.push([start, start + s.totalElapsedTime * 1000]);
+  }
+  if (windows.length === 0) return laps;
+  return laps.filter((lap) => {
+    if (!lap.startTime) return true;
+    const lapStart = new Date(lap.startTime).getTime();
+    const lapEnd = lapStart + lap.totalElapsedTime * 1000;
+    for (const [ws, we] of windows) {
+      if (ws < lapEnd && we > lapStart) return false;
+    }
+    return true;
+  });
 }
 
 function areRepsShortStrides(fast: LapSummary[]): boolean {
