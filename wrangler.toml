@@ -27,3 +27,10 @@ bucket_name = "paceapp-fit"
 [[services]]
 binding = "EMAIL_SVC"
 service = "paceapp-email"
+
+# Settings save (zone edits) triggers the backfill sweep immediately via
+# this in-cluster service binding, so users see recomputed tags in
+# seconds instead of waiting up to 5 min for the cron.
+[[services]]
+binding = "META_BACKFILL_SVC"
+service = "paceapp-meta-backfill"

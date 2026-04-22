@@ -34,3 +34,23 @@ export async function invalidateUserMeta(env: Env, userId: string): Promise<void
     .bind(userId)
     .run();
 }
+
+/**
+ * Kicks the backfill worker's /sweep endpoint over the service binding.
+ * The worker runs its own sweep query and enqueues stale rows; the user
+ * sees recomputed tags in seconds instead of waiting on the 5-minute
+ * cron. Errors are logged but not thrown — the cron is a safety net.
+ */
+export async function triggerSweep(env: Env): Promise<void> {
+  try {
+    const res = await env.META_BACKFILL_SVC.fetch("https://meta-backfill/sweep", {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.SWEEP_SECRET}` },
+    });
+    if (!res.ok) {
+      console.warn(`triggerSweep: ${res.status} ${await res.text()}`);
+    }
+  } catch (e) {
+    console.warn(`triggerSweep failed: ${(e as Error).message}`);
+  }
+}

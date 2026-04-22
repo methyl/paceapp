@@ -2,7 +2,7 @@ import type { Env } from "../env";
 import { json, error } from "../http";
 import { getUserFromRequest } from "../auth";
 import { type HrZones, parseZones, fallbackZones, deriveZonesFromActivities } from "../zones";
-import { saveUserZones, invalidateUserMeta } from "../zones_io";
+import { saveUserZones, invalidateUserMeta, triggerSweep } from "../zones_io";
 
 interface SettingsBody {
   hr_zones?: HrZones | null; // null ⇒ reset to auto-derive
@@ -61,6 +61,7 @@ export async function patchSettings(req: Request, env: Env): Promise<Response> {
 
   await saveUserZones(env, user.id, next);
   await invalidateUserMeta(env, user.id);
+  await triggerSweep(env);
 
   return json({ ok: true, hr_zones: next, effective_zones: next ?? fallbackZones() });
 }
