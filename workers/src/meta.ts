@@ -7,7 +7,7 @@
  */
 import { elevationFromRecords } from "../../shared/elevation";
 
-export const META_VERSION = 6;
+export const META_VERSION = 7;
 
 export interface ActivityMeta {
   workoutLabel?: string;

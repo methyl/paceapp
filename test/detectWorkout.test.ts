@@ -57,9 +57,13 @@ describe("workout type detection (unified tag system)", () => {
     expect(tags).not.toContain("race");
   });
 
-  it("detects easy run: 2025-07-27 (indoor, 5km, HR 129)", async () => {
+  it("detects progressive run: 2025-07-27 (indoor, 5km, HR ramps 93→176)", async () => {
+    // Old classifier labeled this "easy" because the avg HR (129) was
+    // low — which masked a clean progression from Z1 all the way to
+    // Z5. The new classifier catches the ramp.
     const tags = await tagsFor("2025-07-27");
-    expect(tags).toContain("easy");
+    expect(tags).toContain("progressive");
+    expect(tags).not.toContain("easy");
   });
 
   it("detects steady run, not progressive: 2026-04-04 (10km, HR 127-153, pace ~4:46)", async () => {

@@ -89,14 +89,20 @@ export function detectWorkoutType(
 }
 
 /**
- * Classify a run by the HR zone where most time is spent. Uses the
- * user's actual zone ceilings directly (no derived multipliers), so
- * callers whose saved zones differ from the default get the expected
- * breakpoints.
+ * Classify a run by aggregating lap-time across three intensity bands
+ * that map onto the user's physical zones:
+ *
+ *   easy  = Z1 + Z2   (HR ≤ z2_max)           — aerobic base, most runs
+ *   tempo = Z3        (z2_max < HR ≤ z3_max)  — threshold work
+ *   race  = Z4 + Z5   (HR > z3_max)           — above threshold
+ *
+ * "steady" is what we call the mixed profile: substantial time in both
+ * easy AND tempo, neither dominating. A run that sits at the aerobic
+ * threshold (mostly Z2 with drift into Z3) reads as steady — marathon
+ * pace territory.
  */
 function classifyByZone(laps: LapSummary[], zones: HrZones): WorkoutType {
   let easyTime = 0;
-  let steadyTime = 0;
   let tempoTime = 0;
   let raceTime = 0;
   let totalTime = 0;
@@ -104,44 +110,33 @@ function classifyByZone(laps: LapSummary[], zones: HrZones): WorkoutType {
   for (const lap of laps) {
     const hr = lap.avgHeartRate;
     const t = lap.totalElapsedTime;
+    if (!(t > 0)) continue;
     totalTime += t;
 
-    if (hr == null) {
-      easyTime += t; // no HR data, assume easy
-    } else if (hr <= zones.z1_max) {
-      easyTime += t;
-    } else if (hr <= zones.z2_max) {
-      steadyTime += t;
+    if (hr == null || hr <= zones.z2_max) {
+      easyTime += t;   // Z1 + Z2 → easy aerobic
     } else if (hr <= zones.z3_max) {
-      tempoTime += t;
+      tempoTime += t;  // Z3 → tempo/threshold
     } else {
-      // Anything above the Z3 ceiling — tempo/threshold territory and
-      // beyond — reads as "race" in the coarse 4-bucket output. The
-      // multi-tag layer can refine this further if needed.
-      raceTime += t;
+      raceTime += t;   // Z4 + Z5 → race / above-threshold
     }
   }
 
   if (totalTime === 0) return "unknown";
 
   const easyRatio = easyTime / totalTime;
-  const steadyRatio = steadyTime / totalTime;
   const tempoRatio = tempoTime / totalTime;
   const raceRatio = raceTime / totalTime;
 
-  // Majority rules — what zone dominates?
-  if (easyRatio >= 0.60) return "easy";
-  if (raceRatio >= 0.50) return "race";
-  if (tempoRatio >= 0.40) return "tempo";
-  if (steadyRatio >= 0.35) return "steady";
-  if (easyRatio + steadyRatio >= 0.70) return "easy";
-
-  // Mixed — pick highest non-easy zone
-  if (raceRatio >= tempoRatio && raceRatio >= steadyRatio) return "race";
-  if (tempoRatio >= steadyRatio) return "tempo";
-  if (steadyRatio > 0) return "steady";
-
-  return "unknown";
+  if (raceRatio >= 0.40) return "race";
+  if (tempoRatio >= 0.55) return "tempo";
+  // "easy" requires time almost entirely in Z1+Z2. Any meaningful drift
+  // into Z3 flips the classification to "steady" (marathon pace /
+  // aerobic threshold effort), so a 2026-04-04-style 10k with HR
+  // 127-153 reads as steady rather than easy.
+  if (easyRatio >= 0.90) return "easy";
+  if (easyRatio > 0 && (tempoRatio > 0 || raceRatio > 0)) return "steady";
+  return "easy";
 }
 
 function mean(arr: number[]): number {

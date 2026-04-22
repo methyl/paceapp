@@ -203,10 +203,16 @@ export function generateWorkoutLabel(
   const avgRepSpeed = rep.fastSegs.reduce((s, r) => s + r.avgSpeed!, 0) / rep.fastSegs.length;
   const avgRepPace = paceStr(avgRepSpeed);
 
+  // Warmup/cooldown adopt the same word as the overall workoutType so
+  // the label reads coherently with the pill. A user whose zones
+  // classify a 12km easy-paced run as "steady" sees "12km steady +
+  // N×... + 1km steady" rather than a label that contradicts the pill.
+  const paceWord = workoutType === "steady" || workoutType === "tempo" ? workoutType : "easy";
+
   const parts: string[] = [];
-  if (rep.warmupDist > 200) parts.push(`${distLabel(rep.warmupDist)} easy`);
+  if (rep.warmupDist > 200) parts.push(`${distLabel(rep.warmupDist)} ${paceWord}`);
   parts.push(`${rep.fastSegs.length}×${repDistStr} @${avgRepPace}`);
-  if (rep.cooldownDist > 200) parts.push(`${distLabel(rep.cooldownDist)} easy`);
+  if (rep.cooldownDist > 200) parts.push(`${distLabel(rep.cooldownDist)} ${paceWord}`);
 
   return parts.join(" + ");
 }

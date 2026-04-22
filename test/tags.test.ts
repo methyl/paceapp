@@ -154,28 +154,105 @@ describe("tag derivation (server uses shared detectWorkoutType)", () => {
   });
 
   // User-reported regression: a 10km tempo with user's saved zones
-  // {z1:125, z2:143, z3:163, z4:176} and avg HR ~150 was landing as
-  // "race" because the classifier used to derive ceilings from a single
-  // anchor (z1_max × 1.16 = tempo ceiling = 145), which put HR 150 into
-  // "race". Now the zones are honored directly — HR ≤ z3_max = 163 must
-  // read tempo, not race.
-  it("custom zones are honored: HR in Z3 classifies as tempo, not race", async () => {
-    const parsed = await parseFitFile(loadFixture("2026-04-04"), "test");
-    const customZones = { z1_max: 125, z2_max: 143, z3_max: 163, z4_max: 176 };
+  // {z1:125, z2:143, z3:163, z4:176} was landing as "race" because the
+  // classifier used to derive ceilings from a single anchor. Now the
+  // zones are honored directly.
+  it("custom zones: HR at Z3 upper end (152) classifies as tempo, not race", async () => {
+    // Synthesize a run where most laps sit at HR ~152 — well within
+    // Z3 (143-163) for these zones. The detector must pick "tempo".
+    const zones = { z1_max: 125, z2_max: 143, z3_max: 163, z4_max: 176 };
     const tags = deriveTags({
-      zones: customZones,
+      zones,
+      summary: syntheticSummary(10_000),
+      laps: syntheticLaps([152, 150, 153, 149, 155, 151, 154, 150, 152, 153]),
+      segments: [],
+      records: [],
+      totalDistance: 10_000,
+      totalAscent: null,
+    });
+    expect(tags).toContain("tempo");
+    expect(tags).not.toContain("race");
+    expect(tags).not.toContain("easy");
+  });
+
+  // User-reported regression: "137 avg HR cannot be steady if 90%+ of
+  // the run was in Z2". Z2 under the user's zone scheme is aerobic
+  // base / easy. The classifier used to bucket Z1→easy / Z2→steady,
+  // which contradicted training vocabulary. Now Z1+Z2 → easy.
+  it("Z2-dominant run (HR 137 under 125/143/163/176) tags easy, not steady", async () => {
+    const zones = { z1_max: 125, z2_max: 143, z3_max: 163, z4_max: 176 };
+    const tags = deriveTags({
+      zones,
+      summary: syntheticSummary(10_000),
+      laps: syntheticLaps([135, 137, 138, 136, 139, 140, 137, 138, 135, 137]),
+      segments: [],
+      records: [],
+      totalDistance: 10_000,
+      totalAscent: null,
+    });
+    expect(tags).toContain("easy");
+    expect(tags).not.toContain("steady");
+    expect(tags).not.toContain("tempo");
+  });
+
+  // Mixed Z2 + Z3 is the definition of "steady" now — marathon-pace
+  // territory where neither easy nor tempo dominates.
+  it("mixed Z2+Z3 run tags steady", async () => {
+    const zones = { z1_max: 125, z2_max: 143, z3_max: 163, z4_max: 176 };
+    const tags = deriveTags({
+      zones,
+      summary: syntheticSummary(10_000),
+      // Half the laps in Z2 (easy), half in Z3 (tempo).
+      laps: syntheticLaps([140, 142, 148, 152, 141, 150, 143, 155, 139, 149]),
+      segments: [],
+      records: [],
+      totalDistance: 10_000,
+      totalAscent: null,
+    });
+    expect(tags).toContain("steady");
+  });
+
+  // User-reported regression: a plain steady run on a hilly route was
+  // tagged [hill-intervals, steady] because detectHillSprints would
+  // pick up any 3+ uphill stretches on a hilly route. hill-intervals
+  // should require *structured* repeated reps going uphill.
+  it("hilly terrain without interval structure doesn't tag hill-intervals", async () => {
+    const zones = { z1_max: 125, z2_max: 143, z3_max: 163, z4_max: 176 };
+    // Use a real easy-run fixture; pass totalAscent high enough to
+    // clear the hilly threshold but expect *no* hill-intervals.
+    const parsed = await parseFitFile(loadFixture("2025-09-19"), "test");
+    const tags = deriveTags({
+      zones,
       summary: parsed.summary,
       laps: parsed.laps,
       segments: parsed.segments,
       records: parsed.records,
       totalDistance: parsed.summary.totalDistance,
-      totalAscent: null,
+      totalAscent: 300, // pretend it's hilly
     });
-    // The fixture's avg HR sits in the 140s — above z2_max (143) and
-    // below z3_max (163), so majority lap-time should land in tempo.
-    expect(tags).not.toContain("race");
-    // And it should *not* be easy — the user tightened zones
-    // specifically because 140-bpm runs feel harder than "easy".
-    expect(tags).not.toContain("easy");
+    expect(tags).toContain("hilly");
+    expect(tags).not.toContain("hill-intervals");
   });
 });
+
+// ---- synthetic-input helpers ----
+
+function syntheticSummary(totalDistance: number) {
+  return {
+    totalDistance,
+    totalElapsedTime: 3600,
+    avgPace: "5:00",
+  };
+}
+
+function syntheticLaps(hrByLap: number[]) {
+  return hrByLap.map((hr, i) => ({
+    lapIndex: i,
+    startTime: new Date(Date.UTC(2026, 3, 1, 6, i * 5, 0)).toISOString(),
+    totalDistance: 1000,
+    totalElapsedTime: 300,
+    avgHeartRate: hr,
+    avgSpeed: 3.3,
+    avgPace: "5:00",
+  }));
+}

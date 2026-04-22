@@ -2,7 +2,6 @@ import type { HrZones } from "./zones";
 import type { ActivitySummary, LapSummary, RecordPoint } from "../../shared/types";
 import { detectWorkoutType } from "../../shared/detectWorkout";
 import { detectRepStructure } from "../../shared/labeller";
-import { detectHillSprints } from "../../shared/hillSprints";
 
 /**
  * Multi-tag workout classification. One code path with the frontend —
@@ -69,13 +68,10 @@ export function deriveTags(input: DeriveTagsInput): string[] {
     if (rep.isHills) tags.add("hill-intervals");
   }
 
-  // Sustained hill efforts that don't show up as structured laps (e.g.,
-  // hill sprints logged without laps). Only fire when the structured-rep
-  // detector found nothing, otherwise double-counts intervals/strides.
-  if (!rep) {
-    const sprints = detectHillSprints(input.records);
-    if (sprints.length >= 3) tags.add("hill-intervals");
-  }
+  // hill-intervals only comes from structured fast reps going uphill.
+  // A plain hilly run with no interval structure is just "hilly", not
+  // "hill-intervals" — the earlier detectHillSprints-based branch
+  // mis-tagged every steady run on hilly terrain.
 
   if (isHilly(input.totalDistance, input.totalAscent)) tags.add("hilly");
 
