@@ -1,4 +1,5 @@
 import type { LapSummary, RecordPoint } from "./types";
+import { classifyBySpeed } from "./lapUtils";
 
 /**
  * Standard interval distance buckets.
@@ -100,19 +101,14 @@ function labelStructuredWorkout(
   );
   if (withSpeed.length < 4) return null;
 
-  const speeds = withSpeed.map((s) => s.avgSpeed!);
-  const sorted = [...speeds].sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)];
-
   // For easy/steady runs, use a higher threshold to only catch
   // genuinely fast segments (strides are 20%+ faster than easy pace).
-  // For interval workouts, use a lower threshold.
+  // For interval workouts, use a lower threshold — matches `classifyLaps`
+  // so the title's "N×" count stays in sync with the lap table's work tags.
   const fastMultiplier = workoutType === "easy" || workoutType === "steady" ? 1.15 : 1.05;
+  const kinds = classifyBySpeed(withSpeed, fastMultiplier);
 
-  const tagged = withSpeed.map((seg) => {
-    const isFast = seg.avgSpeed! > median * fastMultiplier;
-    return { seg, isFast };
-  });
+  const tagged = withSpeed.map((seg, i) => ({ seg, isFast: kinds[i] === "working" }));
 
   const fastSegs = tagged.filter((t) => t.isFast).map((t) => t.seg);
 

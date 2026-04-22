@@ -374,10 +374,22 @@ function mergeSmallSegments(segments: EffortSegment[]): EffortSegment[] {
 
 const CHUNK_MAX_DISTANCE = 2000; // split segments longer than this
 const CHUNK_TARGET_DISTANCE = 1000; // target ~1km chunks
+const REP_PEER_TOLERANCE = 0.2; // within 20% = peer rep
+
+/** A segment has a "peer" if another segment has similar distance — i.e., it's a rep. */
+function hasRepPeer(seg: EffortSegment, segments: EffortSegment[]): boolean {
+  return segments.some(
+    (s) =>
+      s !== seg &&
+      seg.totalDistance > 0 &&
+      Math.abs(s.totalDistance - seg.totalDistance) / seg.totalDistance < REP_PEER_TOLERANCE
+  );
+}
 
 /**
- * Split long segments into ~1km chunks using record-level data.
- * Short segments (< 2km) are left as-is.
+ * Split long solo segments into ~1km chunks using record-level data.
+ * Short segments (< 2km) and rep-like segments (similar-distance peers) are
+ * left as-is — 3×3km reps stay as three reps, not nine chunks.
  */
 function chunkLongSegments(
   segments: EffortSegment[],
@@ -388,7 +400,7 @@ function chunkLongSegments(
   const result: EffortSegment[] = [];
 
   for (const seg of segments) {
-    if (seg.totalDistance <= CHUNK_MAX_DISTANCE) {
+    if (seg.totalDistance <= CHUNK_MAX_DISTANCE || hasRepPeer(seg, segments)) {
       result.push(seg);
       continue;
     }
@@ -439,7 +451,8 @@ function chunkLongSegments(
 /**
  * Get the best segments for analysis: if laps are auto-laps and we have
  * enough records, detect effort segments. Otherwise use original laps.
- * Long segments (> 2km) are chunked into ~1km pieces using record data.
+ * Long solo segments (> 2km) are chunked into ~1km pieces; repeated
+ * similar-distance segments (reps) are left intact.
  */
 export function getEffortSegments(
   laps: LapSummary[],
@@ -458,6 +471,5 @@ export function getEffortSegments(
     segments = laps.map((l) => ({ ...l, detected: false }));
   }
 
-  // Chunk any long segments into ~1km pieces for meaningful comparison
   return chunkLongSegments(segments, records);
 }

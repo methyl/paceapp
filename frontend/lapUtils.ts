@@ -19,12 +19,33 @@ export function paceSecToStr(sec: number): string {
 }
 
 /**
- * Work/rest classification for lap rows.
+ * Mark each lap "working" if its speed exceeds median × multiplier.
  *
- * Uses the same threshold logic as `labeller.ts` to stay consistent with the
- * workout title: compare each lap's speed against the median × fastMultiplier.
- * Multiplier is strict (1.05) for interval-like types and looser (1.15) for
- * easy/steady.
+ * Shared between `classifyLaps` (UI tags) and `labeller.labelStructuredWorkout`
+ * (title rep count) so the "N×" in the title always matches the work-tag count.
+ * Speed-based (not pace-based) to avoid precision loss from rounded M:SS strings.
+ */
+export function classifyBySpeed(
+  laps: LapSummary[],
+  multiplier: number
+): LapKind[] {
+  if (laps.length === 0) return [];
+  const speeds = laps
+    .map((l) => l.avgSpeed)
+    .filter((s): s is number => typeof s === "number" && s > 0);
+  if (speeds.length === 0) return laps.map(() => "working");
+
+  const sorted = [...speeds].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const threshold = median * multiplier;
+
+  return laps.map((l) =>
+    l.avgSpeed != null && l.avgSpeed > threshold ? "working" : "rest"
+  );
+}
+
+/**
+ * Work/rest classification for lap rows.
  *
  * For everything that isn't an interval workout, the work/rest distinction
  * is noise — we return all "working" so callers can hide tags/filters.
@@ -34,26 +55,10 @@ export function classifyLaps(
   workoutType?: WorkoutType
 ): LapKind[] {
   if (laps.length === 0) return [];
-  // Only intervals get meaningful work/rest classification. Everything else
-  // is a continuous effort; tagging individual laps confuses more than it helps.
   if (workoutType && workoutType !== "intervals") {
     return laps.map(() => "working");
   }
-
-  const paces = laps
-    .map((l) => parsePaceToSec(l.avgPace))
-    .filter((v): v is number => v != null);
-  if (paces.length === 0) return laps.map(() => "working");
-
-  const sorted = [...paces].sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)];
-  // Lower pace = faster. Work threshold = median / 1.05.
-  const threshold = median / 1.05;
-
-  return laps.map((l) => {
-    const p = parsePaceToSec(l.avgPace);
-    return p != null && p < threshold ? "working" : "rest";
-  });
+  return classifyBySpeed(laps, 1.05);
 }
 
 // Compute cumulative-distance x-axis bands (0..1) for rest laps.
