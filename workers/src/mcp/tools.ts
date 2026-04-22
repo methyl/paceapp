@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import type { User } from "../auth";
 import { findMatches, type Reference, type LoadCategory } from "./matching";
+import { parseMeta, deriveMeta } from "../meta";
 
 export const TOOL_DEFINITIONS = [
   {
@@ -101,9 +102,8 @@ async function listActivities(
   if (workoutType) { binds.push(workoutType); clauses.push(`workout_type = ?${binds.length}`); }
 
   const rows = await env.DB.prepare(
-    `SELECT id, file_name, start_time, sport, workout_type, workout_label,
-            total_distance, total_elapsed_time, total_ascent, total_descent,
-            uploaded_at
+    `SELECT id, file_name, start_time, sport, workout_type,
+            total_distance, total_elapsed_time, uploaded_at, meta
      FROM activities
      WHERE ${clauses.join(" AND ")}
      ORDER BY COALESCE(start_time, '') DESC
@@ -112,26 +112,28 @@ async function listActivities(
     .bind(...binds)
     .all<{
       id: string; file_name: string; start_time: string | null; sport: string | null;
-      workout_type: string | null; workout_label: string | null;
-      total_distance: number | null; total_elapsed_time: number | null;
-      total_ascent: number | null; total_descent: number | null;
-      uploaded_at: number;
+      workout_type: string | null; total_distance: number | null;
+      total_elapsed_time: number | null; uploaded_at: number;
+      meta: string | null;
     }>();
 
   return {
-    activities: (rows.results ?? []).map((r) => ({
-      id: r.id,
-      file_name: r.file_name,
-      start_time: r.start_time,
-      sport: r.sport,
-      workout_type: r.workout_type,
-      workout_label: r.workout_label,
-      total_distance_m: r.total_distance,
-      total_elapsed_s: r.total_elapsed_time,
-      total_ascent_m: r.total_ascent,
-      total_descent_m: r.total_descent,
-      uploaded_at: r.uploaded_at,
-    })),
+    activities: (rows.results ?? []).map((r) => {
+      const m = parseMeta(r.meta);
+      return {
+        id: r.id,
+        file_name: r.file_name,
+        start_time: r.start_time,
+        sport: r.sport,
+        workout_type: r.workout_type,
+        workout_label: m.workoutLabel ?? null,
+        total_distance_m: r.total_distance,
+        total_elapsed_s: r.total_elapsed_time,
+        total_ascent_m: m.totalAscent ?? null,
+        total_descent_m: m.totalDescent ?? null,
+        uploaded_at: r.uploaded_at,
+      };
+    }),
   };
 }
 
@@ -146,29 +148,36 @@ async function getActivity(
   const parts = new Set(partsIn ?? ["summary", "laps", "segments"]);
 
   const row = await env.DB.prepare(
-    `SELECT json_r2_key, file_name, workout_type, workout_label,
-            total_ascent, total_descent
+    `SELECT json_r2_key, file_name, workout_type, meta
      FROM activities WHERE id = ?1 AND user_id = ?2`,
   )
     .bind(id, user.id)
     .first<{
       json_r2_key: string; file_name: string;
-      workout_type: string | null; workout_label: string | null;
-      total_ascent: number | null; total_descent: number | null;
+      workout_type: string | null; meta: string | null;
     }>();
   if (!row) throw new Error("activity not found");
 
   const obj = await env.FIT_BUCKET.get(row.json_r2_key);
   if (!obj) throw new Error("activity json missing");
   const full = (await obj.json()) as Record<string, unknown>;
+  let m = parseMeta(row.meta);
+  if (!row.meta || Object.keys(m).length === 0) {
+    m = deriveMeta(full);
+    await env.DB.prepare(
+      "UPDATE activities SET meta = ?1 WHERE id = ?2 AND user_id = ?3",
+    )
+      .bind(JSON.stringify(m), id, user.id)
+      .run();
+  }
 
   const out: Record<string, unknown> = {
     id,
     file_name: row.file_name,
     workout_type: row.workout_type ?? full.workoutType ?? null,
-    workout_label: row.workout_label ?? full.workoutLabel ?? null,
-    total_ascent_m: row.total_ascent,
-    total_descent_m: row.total_descent,
+    workout_label: m.workoutLabel ?? full.workoutLabel ?? null,
+    total_ascent_m: m.totalAscent ?? null,
+    total_descent_m: m.totalDescent ?? null,
   };
   if (parts.has("summary")) out.summary = full.summary;
   if (parts.has("laps")) out.laps = full.laps;

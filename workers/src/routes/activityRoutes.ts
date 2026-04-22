@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import { json, error } from "../http";
 import { getUserFromRequest } from "../auth";
+import { type ActivityMeta, deriveMeta, parseMeta } from "../meta";
 
 const MAX_FIT_BYTES = 20 * 1024 * 1024; // 20 MB per FIT file
 const MAX_JSON_BYTES = 30 * 1024 * 1024; // 30 MB parsed JSON
@@ -11,14 +12,12 @@ interface ActivityRow {
   start_time: string | null;
   sport: string | null;
   workout_type: string | null;
-  workout_label: string | null;
   total_distance: number | null;
   total_elapsed_time: number | null;
-  total_ascent: number | null;
-  total_descent: number | null;
   fit_size: number | null;
   json_size: number | null;
   uploaded_at: number;
+  meta: string | null;
 }
 
 export async function listActivities(req: Request, env: Env): Promise<Response> {
@@ -26,9 +25,9 @@ export async function listActivities(req: Request, env: Env): Promise<Response> 
   if (!user) return error(401, "not authenticated");
 
   const { results } = await env.DB.prepare(
-    `SELECT id, file_name, start_time, sport, workout_type, workout_label,
-            total_distance, total_elapsed_time, total_ascent, total_descent,
-            fit_size, json_size, uploaded_at
+    `SELECT id, file_name, start_time, sport, workout_type,
+            total_distance, total_elapsed_time, fit_size, json_size,
+            uploaded_at, meta
      FROM activities
      WHERE user_id = ?1
      ORDER BY COALESCE(start_time, '') DESC`,
@@ -37,21 +36,24 @@ export async function listActivities(req: Request, env: Env): Promise<Response> 
     .all<ActivityRow>();
 
   return json({
-    activities: (results ?? []).map((r) => ({
-      id: r.id,
-      fileName: r.file_name,
-      startTime: r.start_time,
-      sport: r.sport,
-      workoutType: r.workout_type,
-      workoutLabel: r.workout_label,
-      totalDistance: r.total_distance,
-      totalElapsedTime: r.total_elapsed_time,
-      totalAscent: r.total_ascent,
-      totalDescent: r.total_descent,
-      fitSize: r.fit_size,
-      jsonSize: r.json_size,
-      uploadedAt: r.uploaded_at,
-    })),
+    activities: (results ?? []).map((r) => {
+      const meta = parseMeta(r.meta);
+      return {
+        id: r.id,
+        fileName: r.file_name,
+        startTime: r.start_time,
+        sport: r.sport,
+        workoutType: r.workout_type,
+        totalDistance: r.total_distance,
+        totalElapsedTime: r.total_elapsed_time,
+        fitSize: r.fit_size,
+        jsonSize: r.json_size,
+        uploadedAt: r.uploaded_at,
+        workoutLabel: meta.workoutLabel ?? null,
+        totalAscent: meta.totalAscent ?? null,
+        totalDescent: meta.totalDescent ?? null,
+      };
+    }),
   });
 }
 
@@ -115,31 +117,30 @@ export async function uploadActivity(req: Request, env: Env): Promise<Response> 
     httpMetadata: { contentType: "application/json" },
   });
 
+  const metaJson = JSON.stringify(parsedMeta.meta);
+
   if (existing) {
     await env.DB.prepare(
       `UPDATE activities SET
-         start_time = ?1, sport = ?2, workout_type = ?3, workout_label = ?4,
-         total_distance = ?5, total_elapsed_time = ?6,
-         total_ascent = ?7, total_descent = ?8,
-         fit_r2_key = ?9, json_r2_key = ?10,
-         fit_size = ?11, json_size = ?12,
-         uploaded_at = ?13
-       WHERE id = ?14 AND user_id = ?15`,
+         start_time = ?1, sport = ?2, workout_type = ?3,
+         total_distance = ?4, total_elapsed_time = ?5,
+         fit_r2_key = ?6, json_r2_key = ?7,
+         fit_size = ?8, json_size = ?9,
+         uploaded_at = ?10, meta = ?11
+       WHERE id = ?12 AND user_id = ?13`,
     )
       .bind(
         parsedMeta.startTime,
         parsedMeta.sport,
         parsedMeta.workoutType,
-        parsedMeta.workoutLabel,
         parsedMeta.totalDistance,
         parsedMeta.totalElapsedTime,
-        parsedMeta.totalAscent,
-        parsedMeta.totalDescent,
         fitKey,
         jsonKey,
         fitBytes.byteLength,
         parsedBytes.byteLength,
         now,
+        metaJson,
         id,
         user.id,
       )
@@ -147,10 +148,10 @@ export async function uploadActivity(req: Request, env: Env): Promise<Response> 
   } else {
     await env.DB.prepare(
       `INSERT INTO activities
-         (id, user_id, file_name, start_time, sport, workout_type, workout_label,
-          total_distance, total_elapsed_time, total_ascent, total_descent,
-          fit_r2_key, json_r2_key, fit_size, json_size, uploaded_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)`,
+         (id, user_id, file_name, start_time, sport, workout_type,
+          total_distance, total_elapsed_time,
+          fit_r2_key, json_r2_key, fit_size, json_size, uploaded_at, meta)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`,
     )
       .bind(
         id,
@@ -159,16 +160,14 @@ export async function uploadActivity(req: Request, env: Env): Promise<Response> 
         parsedMeta.startTime,
         parsedMeta.sport,
         parsedMeta.workoutType,
-        parsedMeta.workoutLabel,
         parsedMeta.totalDistance,
         parsedMeta.totalElapsedTime,
-        parsedMeta.totalAscent,
-        parsedMeta.totalDescent,
         fitKey,
         jsonKey,
         fitBytes.byteLength,
         parsedBytes.byteLength,
         now,
+        metaJson,
       )
       .run();
   }
@@ -251,11 +250,9 @@ interface ParsedMeta {
   startTime: string | null;
   sport: string | null;
   workoutType: string | null;
-  workoutLabel: string | null;
   totalDistance: number | null;
   totalElapsedTime: number | null;
-  totalAscent: number | null;
-  totalDescent: number | null;
+  meta: ActivityMeta;
 }
 
 function extractMeta(obj: unknown, _fileName: string): ParsedMeta {
@@ -267,45 +264,15 @@ function extractMeta(obj: unknown, _fileName: string): ParsedMeta {
       totalElapsedTime?: number;
     };
     workoutType?: string;
-    workoutLabel?: string;
-    records?: Array<{ altitude?: number }>;
   };
-  const { ascent, descent } = elevationFromRecords(a?.records);
   return {
     startTime: a?.summary?.startTime ?? null,
     sport: a?.summary?.sport ?? null,
     workoutType: a?.workoutType ?? null,
-    workoutLabel: typeof a?.workoutLabel === "string" ? a.workoutLabel : null,
     totalDistance: numOrNull(a?.summary?.totalDistance),
     totalElapsedTime: numOrNull(a?.summary?.totalElapsedTime),
-    totalAscent: ascent,
-    totalDescent: descent,
+    meta: deriveMeta(obj),
   };
-}
-
-function elevationFromRecords(
-  records: Array<{ altitude?: number }> | undefined,
-): { ascent: number | null; descent: number | null } {
-  if (!Array.isArray(records) || records.length < 2) {
-    return { ascent: null, descent: null };
-  }
-  let ascent = 0;
-  let descent = 0;
-  let sawAltitude = false;
-  let prev: number | null = null;
-  for (const r of records) {
-    const a = r?.altitude;
-    if (typeof a !== "number" || !Number.isFinite(a)) continue;
-    sawAltitude = true;
-    if (prev != null) {
-      const d = a - prev;
-      if (d > 0) ascent += d;
-      else descent -= d;
-    }
-    prev = a;
-  }
-  if (!sawAltitude) return { ascent: null, descent: null };
-  return { ascent, descent };
 }
 
 function numOrNull(v: unknown): number | null {
