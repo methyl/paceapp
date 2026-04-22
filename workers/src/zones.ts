@@ -14,7 +14,11 @@ export interface HrZones {
   z4_max: number;
 }
 
-const FALLBACK_HRMAX = 190;
+// Default Z2 anchor (top of easy / aerobic threshold) when no explicit
+// zones and no observation-based derivation is possible. 140 matches the
+// client-side detectWorkout default so server-derived tags agree with
+// the label string that was computed at upload time.
+const FALLBACK_Z2_ANCHOR = 140;
 
 const FRIEL_LTHR_SCALE = {
   z1_max: 0.85,
@@ -28,6 +32,16 @@ const HRMAX_SCALE = {
   z2_max: 0.78,
   z3_max: 0.88,
   z4_max: 0.95,
+} as const;
+
+// Z2-anchor scaling mirrors the client's detectWorkout ratios so the two
+// systems agree at the boundaries: easy ≤ Z2, steady ≤ Z2 × 1.08, tempo
+// ≤ Z2 × 1.16, threshold ≤ Z2 × 1.25.
+const Z2_SCALE = {
+  z1_max: 1.00,
+  z2_max: 1.08,
+  z3_max: 1.16,
+  z4_max: 1.25,
 } as const;
 
 export function parseZones(raw: string | null | undefined): HrZones | null {
@@ -50,7 +64,16 @@ export function parseZones(raw: string | null | undefined): HrZones | null {
 }
 
 export function fallbackZones(): HrZones {
-  return fromHrmax(FALLBACK_HRMAX);
+  return fromZ2Anchor(FALLBACK_Z2_ANCHOR);
+}
+
+export function fromZ2Anchor(anchor: number): HrZones {
+  return {
+    z1_max: Math.round(anchor * Z2_SCALE.z1_max),
+    z2_max: Math.round(anchor * Z2_SCALE.z2_max),
+    z3_max: Math.round(anchor * Z2_SCALE.z3_max),
+    z4_max: Math.round(anchor * Z2_SCALE.z4_max),
+  };
 }
 
 export function fromHrmax(hrmax: number): HrZones {

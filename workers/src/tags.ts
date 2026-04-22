@@ -38,7 +38,12 @@ export interface RecordPoint {
   altitude?: number;
 }
 
-const HILLY_ASCENT_PER_KM = 10;
+// Post-smoothing threshold. A genuinely hilly road run sits at 15-25 m/km;
+// rolling terrain without sustained climbs typically under 10. Combined
+// with the smoothing in deriveMeta this keeps flat-but-noisy activities
+// from tagging as hilly.
+const HILLY_ASCENT_PER_KM = 15;
+const HILLY_MIN_TOTAL_ASCENT_M = 100;
 
 export function deriveTags(input: DeriveTagsInput): string[] {
   const tags = new Set<string>();
@@ -74,42 +79,45 @@ function classifyIntensity(
   input: DeriveTagsInput,
 ): "easy" | "steady" | "tempo" | "threshold" | "vo2" | "anaerobic" | null {
   const { zones, laps } = input;
-  const z3_mid = (zones.z2_max + zones.z3_max) / 2;
 
   let totalT = 0;
-  let tZ12 = 0;
-  let tZ3Lo = 0;
-  let tZ3Hi = 0;
-  let tZ4 = 0;
-  let tZ5 = 0;
+  let tEasy = 0;
+  let tSteady = 0;
+  let tTempo = 0;
+  let tThreshold = 0;
+  let tVo2 = 0;
 
   for (const lap of laps) {
     const t = lap.totalElapsedTime;
     if (!(t > 0)) continue;
     totalT += t;
     const hr = lap.avgHeartRate;
-    if (hr == null) { tZ12 += t; continue; }
-    if (hr <= zones.z2_max)      tZ12 += t;
-    else if (hr <= z3_mid)       tZ3Lo += t;
-    else if (hr <= zones.z3_max) tZ3Hi += t;
-    else if (hr <= zones.z4_max) tZ4 += t;
-    else                         tZ5 += t;
+    if (hr == null) { tEasy += t; continue; }
+    if (hr <= zones.z1_max)      tEasy += t;
+    else if (hr <= zones.z2_max) tSteady += t;
+    else if (hr <= zones.z3_max) tTempo += t;
+    else if (hr <= zones.z4_max) tThreshold += t;
+    else                         tVo2 += t;
   }
 
   if (totalT === 0) return null;
   const r = (x: number) => x / totalT;
 
-  if (r(tZ5) >= 0.30) return "vo2";
-  if (r(tZ4) >= 0.30) return "threshold";
-  if (r(tZ3Hi) >= 0.30) return "tempo";
-  if (r(tZ3Lo) >= 0.30) return "steady";
-  if (r(tZ12) >= 0.60) return "easy";
+  // Clear-dominance thresholds mirror the client's classifyByZone: a
+  // majority of easy time wins unless harder zones accumulate enough
+  // time to credibly name the session.
+  if (r(tEasy) >= 0.60) return "easy";
+  if (r(tVo2) >= 0.30) return "vo2";
+  if (r(tThreshold) >= 0.35) return "threshold";
+  if (r(tTempo) >= 0.40) return "tempo";
+  if (r(tSteady) >= 0.35) return "steady";
+  if (r(tEasy) + r(tSteady) >= 0.70) return "easy";
 
   // Mixed profile — pick the hardest zone with meaningful time.
-  if (r(tZ5) >= 0.10) return "vo2";
-  if (r(tZ4) >= 0.15) return "threshold";
-  if (r(tZ3Hi) >= 0.15) return "tempo";
-  if (r(tZ3Lo) >= 0.15) return "steady";
+  if (r(tVo2) >= 0.15) return "vo2";
+  if (r(tThreshold) >= 0.15) return "threshold";
+  if (r(tTempo) >= 0.15) return "tempo";
+  if (r(tSteady) > 0) return "steady";
   return "easy";
 }
 
@@ -176,6 +184,7 @@ function isProgressive(laps: LapSummary[]): boolean {
 
 function isHilly(totalDistance: number, totalAscent: number | null): boolean {
   if (totalAscent == null || totalDistance < 2000) return false;
+  if (totalAscent < HILLY_MIN_TOTAL_ASCENT_M) return false;
   const km = totalDistance / 1000;
   return totalAscent / km >= HILLY_ASCENT_PER_KM;
 }
