@@ -314,7 +314,6 @@ export default function LibraryRail({
         )}
       </div>
 
-      {/* Single scroll region — main list + similar flow continuously */}
       <div className="rail-list">
         {groups.map((g, gi) => (
           <div key={gi}>
@@ -335,36 +334,38 @@ export default function LibraryRail({
             No runs match this filter.
           </div>
         )}
+      </div>
 
-        {similar.length > 0 && (
-          <>
+      {similar.length > 0 && (
+        <div
+          style={{
+            borderTop: "1px solid var(--hair)",
+            background: "#fff",
+            flexShrink: 0,
+          }}
+        >
+          <div
+            className="row between"
+            style={{ padding: "12px 16px 6px", alignItems: "center" }}
+          >
+            <div className="rail-title" style={{ margin: 0 }}>
+              Similar · {similar.length}
+            </div>
             <div
-              className="rail-section-hdr"
               style={{
-                marginTop: 16,
-                padding: "12px 16px 6px",
-                borderTop: "1px solid var(--hair)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
+                fontSize: 10,
+                color: "var(--ink-3)",
+                letterSpacing: "0.04em",
               }}
             >
-              <div className="rail-title" style={{ margin: 0 }}>
-                Similar · {similar.length}
-              </div>
-              <div
-                style={{
-                  fontSize: 10,
-                  color: "var(--ink-3)",
-                  letterSpacing: "0.04em",
-                }}
-              >
-                matched to current
-              </div>
+              matched to current
             </div>
+          </div>
+          {/* ~2.5 compact rows visible, rest scrolls within the panel */}
+          <div style={{ maxHeight: 128, overflowY: "auto", paddingBottom: 8 }}>
             {similar.map((a) => (
               <RunRow
-                key={`sim-${a.id}`}
+                key={a.id}
                 activity={a}
                 selected={a.id === hoveredId}
                 compact
@@ -372,9 +373,9 @@ export default function LibraryRail({
                 onHover={onHover}
               />
             ))}
-          </>
-        )}
-      </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
