@@ -517,6 +517,42 @@ a { color: inherit; }
 }
 .rail-chip.active .chip-count { color: rgba(255,255,255,0.7); }
 
+/* Sub-filter row — appears below the primary type row when a type is selected */
+.rail-subfilters {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 0.5px dashed var(--hair);
+}
+.rail-subchip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 0.5px solid var(--hair);
+  background: var(--bg-sunk);
+  font-size: 10.5px; font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+  font-variant-numeric: tabular-nums;
+}
+.rail-subchip:hover {
+  background: #fff;
+  border-color: var(--hair-strong);
+  color: var(--ink);
+}
+.rail-subchip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.rail-subchip .chip-count {
+  font-size: 9.5px;
+  color: var(--ink-3);
+  font-weight: 600;
+}
+.rail-subchip.active .chip-count { color: var(--accent-ink); opacity: 0.7; }
+
 .rail-list { flex: 1; overflow: auto; padding: 4px 0 24px; }
 
 .run-row {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ParsedActivity, WorkoutType } from "../types";
 import { WORKOUT_LABELS, WORKOUT_COLORS } from "../types";
 import RunPathThumb from "./RunPathThumb";
@@ -47,8 +47,6 @@ function formatDuration(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-// Score candidates against the selected run — lower is more similar.
-// Weights mirror the design: type > distance > pace.
 function scoreSimilarity(target: ParsedActivity, candidate: ParsedActivity): number {
   if (target.id === candidate.id) return Infinity;
   const typeMatch = target.workoutType === candidate.workoutType ? 0 : 1;
@@ -64,7 +62,7 @@ function scoreSimilarity(target: ParsedActivity, candidate: ParsedActivity): num
 function findSimilar(
   all: ParsedActivity[],
   target: ParsedActivity | null | undefined,
-  max = 6
+  max = 8
 ): ParsedActivity[] {
   if (!target) return [];
   return all
@@ -73,6 +71,75 @@ function findSimilar(
     .sort((x, y) => x.score - y.score)
     .slice(0, max)
     .map(({ a }) => a);
+}
+
+// Sub-filter buckets for intervals — matched against workoutLabel text.
+// parseFit produces labels like "2km easy + 4×1km @3:50 + 2km easy", so
+// we look for rep-distance tokens (400m, 800m, 1km, mile, 2km).
+type SubFilterOption = {
+  key: string;
+  label: string;
+  match: (a: ParsedActivity) => boolean;
+};
+
+const INTERVAL_REPS: SubFilterOption[] = [
+  {
+    key: "400",
+    label: "400m",
+    match: (a) => /\b400\s*m\b|×\s*400/i.test(a.workoutLabel),
+  },
+  {
+    key: "800",
+    label: "800m",
+    match: (a) => /\b800\s*m\b|×\s*800/i.test(a.workoutLabel),
+  },
+  {
+    key: "1000",
+    label: "1 km",
+    match: (a) =>
+      /\b1\s*km\b|×\s*1\s*km|1000\s*m/i.test(a.workoutLabel),
+  },
+  {
+    key: "mile",
+    label: "Mile",
+    match: (a) => /\bmile\b|\bmi\b/i.test(a.workoutLabel),
+  },
+  {
+    key: "2000",
+    label: "2 km",
+    match: (a) =>
+      /\b2\s*km\b|×\s*2\s*km|2000\s*m/i.test(a.workoutLabel),
+  },
+];
+
+// Distance buckets — applied to total distance in km.
+const DISTANCE_BUCKETS: Array<{
+  key: string;
+  label: string;
+  test: (km: number) => boolean;
+}> = [
+  { key: "lt5", label: "< 5 km", test: (km) => km < 5 },
+  { key: "5-10", label: "5–10 km", test: (km) => km >= 5 && km < 10 },
+  { key: "10-15", label: "10–15 km", test: (km) => km >= 10 && km < 15 },
+  { key: "15p", label: "15+ km", test: (km) => km >= 15 },
+];
+
+function getSubFilterOptions(
+  type: WorkoutType | "all",
+  pool: ParsedActivity[]
+): SubFilterOption[] | null {
+  if (type === "all") return null;
+  if (type === "intervals") {
+    // Only keep interval-length buckets that have at least one match
+    return INTERVAL_REPS.filter((opt) => pool.some(opt.match));
+  }
+  // Distance buckets for all other types
+  const opts: SubFilterOption[] = DISTANCE_BUCKETS.map((b) => ({
+    key: b.key,
+    label: b.label,
+    match: (a) => b.test(a.summary.totalDistance / 1000),
+  }));
+  return opts.filter((opt) => pool.some(opt.match));
 }
 
 interface RunRowProps {
@@ -139,6 +206,12 @@ export default function LibraryRail({
   hoveredId,
 }: LibraryRailProps) {
   const [filter, setFilter] = useState<WorkoutType | "all">("all");
+  const [subFilter, setSubFilter] = useState<string | null>(null);
+
+  // Reset sub-filter whenever the primary type changes — stale keys don't match new pool.
+  useEffect(() => {
+    setSubFilter(null);
+  }, [filter]);
 
   const typeCounts = useMemo(() => {
     const counts: Partial<Record<WorkoutType, number>> = {};
@@ -146,15 +219,29 @@ export default function LibraryRail({
     return counts;
   }, [activities]);
 
+  // Pool filtered by primary type only — used to compute which sub-filter
+  // buckets are non-empty.
+  const typePool = useMemo(() => {
+    if (filter === "all") return activities;
+    return activities.filter((a) => a.workoutType === filter);
+  }, [activities, filter]);
+
+  const subOptions = useMemo(() => getSubFilterOptions(filter, typePool), [filter, typePool]);
+
+  const filtered = useMemo(() => {
+    if (!subFilter || !subOptions) return typePool;
+    const opt = subOptions.find((o) => o.key === subFilter);
+    if (!opt) return typePool;
+    return typePool.filter(opt.match);
+  }, [typePool, subFilter, subOptions]);
+
   const sorted = useMemo(() => {
-    const filtered =
-      filter === "all" ? activities : activities.filter((a) => a.workoutType === filter);
     return [...filtered].sort((a, b) => {
       const da = a.summary.startTime ? new Date(a.summary.startTime).getTime() : 0;
       const db = b.summary.startTime ? new Date(b.summary.startTime).getTime() : 0;
       return db - da;
     });
-  }, [activities, filter]);
+  }, [filtered]);
 
   const groups = useMemo(() => {
     const map = new Map<string, { label: string; items: ParsedActivity[] }>();
@@ -206,8 +293,28 @@ export default function LibraryRail({
             </button>
           ))}
         </div>
+        {subOptions && subOptions.length > 0 && (
+          <div className="rail-subfilters">
+            {subOptions.map((opt) => {
+              const count = typePool.filter(opt.match).length;
+              const active = subFilter === opt.key;
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  className={`rail-subchip ${active ? "active" : ""}`}
+                  onClick={() => setSubFilter(active ? null : opt.key)}
+                >
+                  {opt.label}
+                  <span className="chip-count">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
+      {/* Single scroll region — main list + similar flow continuously */}
       <div className="rail-list">
         {groups.map((g, gi) => (
           <div key={gi}>
@@ -228,44 +335,36 @@ export default function LibraryRail({
             No runs match this filter.
           </div>
         )}
-      </div>
 
-      {similar.length > 0 && (
-        <div
-          style={{
-            borderTop: "1px solid var(--hair)",
-            background: "#fff",
-            flexShrink: 0,
-          }}
-        >
-          <div
-            className="row between"
-            style={{ padding: "12px 16px 6px", alignItems: "center" }}
-          >
-            <div className="rail-title" style={{ margin: 0 }}>
-              Similar · {similar.length}
-            </div>
+        {similar.length > 0 && (
+          <>
             <div
+              className="rail-section-hdr"
               style={{
-                fontSize: 10,
-                color: "var(--ink-3)",
-                letterSpacing: "0.04em",
+                marginTop: 16,
+                padding: "12px 16px 6px",
+                borderTop: "1px solid var(--hair)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
               }}
             >
-              matched to current
+              <div className="rail-title" style={{ margin: 0 }}>
+                Similar · {similar.length}
+              </div>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "var(--ink-3)",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                matched to current
+              </div>
             </div>
-          </div>
-          {/* ~2.5 compact rows visible, rest scrolls */}
-          <div
-            style={{
-              maxHeight: 128,
-              overflowY: "auto",
-              paddingBottom: 8,
-            }}
-          >
             {similar.map((a) => (
               <RunRow
-                key={a.id}
+                key={`sim-${a.id}`}
                 activity={a}
                 selected={a.id === hoveredId}
                 compact
@@ -273,9 +372,9 @@ export default function LibraryRail({
                 onHover={onHover}
               />
             ))}
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </aside>
   );
 }
