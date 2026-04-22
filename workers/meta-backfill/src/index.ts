@@ -107,7 +107,7 @@ async function buildWrites(
       records?: Array<Record<string, unknown>>;
       laps?: Array<Record<string, unknown>>;
       segments?: Array<Record<string, unknown>>;
-      summary?: { totalDistance?: number };
+      summary?: Record<string, unknown>;
     };
     const meta = deriveMeta(full);
 
@@ -118,12 +118,21 @@ async function buildWrites(
 
     const laps = (full.laps ?? []) as unknown as Parameters<typeof deriveTags>[0]["laps"];
     const segments = (full.segments ?? full.laps ?? []) as unknown as Parameters<typeof deriveTags>[0]["segments"];
+    const summary = (full.summary ?? {
+      totalDistance: 0,
+      totalElapsedTime: 0,
+      avgPace: "",
+    }) as unknown as Parameters<typeof deriveTags>[0]["summary"];
+    const totalDistance = typeof full.summary?.totalDistance === "number"
+      ? (full.summary.totalDistance as number)
+      : 0;
     const tags = deriveTags({
       zones,
+      summary,
       laps,
       segments,
       records: (full.records ?? []) as unknown as Parameters<typeof deriveTags>[0]["records"],
-      totalDistance: typeof full.summary?.totalDistance === "number" ? full.summary.totalDistance : 0,
+      totalDistance,
       totalAscent: meta.totalAscent ?? null,
     });
 

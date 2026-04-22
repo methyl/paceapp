@@ -130,6 +130,11 @@ export async function uploadActivity(req: Request, env: Env): Promise<Response> 
   const segsIn = (parsedObj.segments as Parameters<typeof deriveTags>[0]["segments"]) ?? lapsIn;
   const tags = deriveTags({
     zones,
+    summary: (parsedObj.summary as Parameters<typeof deriveTags>[0]["summary"]) ?? {
+      totalDistance: parsedMeta.totalDistance ?? 0,
+      totalElapsedTime: parsedMeta.totalElapsedTime ?? 0,
+      avgPace: "",
+    },
     laps: lapsIn,
     segments: segsIn,
     records: (parsedObj.records as Parameters<typeof deriveTags>[0]["records"]) ?? [],

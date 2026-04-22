@@ -1,11 +1,9 @@
-export type WorkoutType =
-  | "easy"
-  | "steady"
-  | "tempo"
-  | "intervals"
-  | "progressive"
-  | "race"
-  | "unknown";
+// Re-export runtime types from shared/ so server and frontend stay in
+// lock-step. UI-specific constants (colors, labels) + ParsedActivity
+// (which references browser objects like File) live here.
+
+export type { LapSummary, RecordPoint, ActivitySummary, WorkoutType } from "../shared/types";
+import type { LapSummary, RecordPoint, ActivitySummary, WorkoutType } from "../shared/types";
 
 export const WORKOUT_LABELS: Record<WorkoutType, string> = {
   easy: "Easy",
@@ -26,59 +24,6 @@ export const WORKOUT_COLORS: Record<WorkoutType, string> = {
   race: "#ec4899",
   unknown: "#6b7280",
 };
-
-export interface LapSummary {
-  lapIndex: number;
-  startTime: string;
-  totalDistance: number;
-  totalElapsedTime: number;
-  avgHeartRate?: number;
-  maxHeartRate?: number;
-  avgCadence?: number;
-  avgSpeed?: number;
-  avgPace: string;
-  avgVerticalOscillation?: number;
-  avgGroundContactTime?: number;
-  avgGroundContactTimeBalance?: number;
-  avgStrideLength?: number;
-  avgVerticalRatio?: number;
-  avgPower?: number;
-}
-
-export interface RecordPoint {
-  timestamp: string;
-  elapsed: number;
-  distance: number;
-  altitude?: number;
-  lat?: number;
-  lng?: number;
-  heartRate?: number;
-  cadence?: number;
-  speed?: number;
-  verticalOscillation?: number;
-  groundContactTime?: number;
-  groundContactTimeBalance?: number;
-  strideLength?: number;
-  verticalRatio?: number;
-  power?: number;
-  lapIndex: number;
-}
-
-export interface ActivitySummary {
-  sport?: string;
-  startTime?: string;
-  totalDistance: number;
-  totalElapsedTime: number;
-  avgHeartRate?: number;
-  avgCadence?: number;
-  avgSpeed?: number;
-  avgPace: string;
-  avgVerticalOscillation?: number;
-  avgGroundContactTime?: number;
-  avgStrideLength?: number;
-  avgVerticalRatio?: number;
-  avgPower?: number;
-}
 
 export interface ParsedActivity {
   id: string;
