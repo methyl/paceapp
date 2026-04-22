@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { RemoteUser } from "../api/client";
 import McpAccessModal from "./McpAccessModal";
+import ZoneSettingsModal from "./ZoneSettingsModal";
 
 interface Props {
   user: RemoteUser | null;
@@ -16,6 +17,7 @@ export default function AuthBar({ user, loading, onRequestLink, onLogout }: Prop
   const [err, setErr] = useState("");
   const [devLink, setDevLink] = useState<string | null>(null);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [zonesOpen, setZonesOpen] = useState(false);
 
   if (loading) return <span className="text-xs text-gray-400">…</span>;
 
@@ -24,6 +26,12 @@ export default function AuthBar({ user, loading, onRequestLink, onLogout }: Prop
       <>
         <div className="flex items-center gap-2 text-xs">
           <span className="text-gray-600">{user.email}</span>
+          <button
+            onClick={() => setZonesOpen(true)}
+            className="text-gray-500 hover:text-gray-800 underline"
+          >
+            Zones
+          </button>
           <button
             onClick={() => setMcpOpen(true)}
             className="text-gray-500 hover:text-gray-800 underline"
@@ -38,6 +46,7 @@ export default function AuthBar({ user, loading, onRequestLink, onLogout }: Prop
           </button>
         </div>
         <McpAccessModal open={mcpOpen} onClose={() => setMcpOpen(false)} />
+        <ZoneSettingsModal open={zonesOpen} onClose={() => setZonesOpen(false)} />
       </>
     );
   }

@@ -2,6 +2,8 @@ import type { Env } from "../env";
 import { json, error } from "../http";
 import { getUserFromRequest } from "../auth";
 import { type ActivityMeta, META_VERSION, deriveMeta, parseMeta } from "../meta";
+import { deriveTags } from "../tags";
+import { loadUserZones } from "../zones_io";
 
 const MAX_FIT_BYTES = 20 * 1024 * 1024; // 20 MB per FIT file
 const MAX_JSON_BYTES = 30 * 1024 * 1024; // 30 MB parsed JSON
@@ -18,6 +20,7 @@ interface ActivityRow {
   json_size: number | null;
   uploaded_at: number;
   meta: string | null;
+  tags: string | null;
 }
 
 export async function listActivities(req: Request, env: Env): Promise<Response> {
@@ -25,12 +28,13 @@ export async function listActivities(req: Request, env: Env): Promise<Response> 
   if (!user) return error(401, "not authenticated");
 
   const { results } = await env.DB.prepare(
-    `SELECT id, file_name, start_time, sport, workout_type,
-            total_distance, total_elapsed_time, fit_size, json_size,
-            uploaded_at, meta
-     FROM activities
-     WHERE user_id = ?1
-     ORDER BY COALESCE(start_time, '') DESC`,
+    `SELECT a.id, a.file_name, a.start_time, a.sport, a.workout_type,
+            a.total_distance, a.total_elapsed_time, a.fit_size, a.json_size,
+            a.uploaded_at, a.meta,
+            (SELECT GROUP_CONCAT(t.tag) FROM activity_tags t WHERE t.activity_id = a.id) AS tags
+     FROM activities a
+     WHERE a.user_id = ?1
+     ORDER BY COALESCE(a.start_time, '') DESC`,
   )
     .bind(user.id)
     .all<ActivityRow>();
@@ -52,6 +56,7 @@ export async function listActivities(req: Request, env: Env): Promise<Response> 
         workoutLabel: meta.workoutLabel ?? null,
         totalAscent: meta.totalAscent ?? null,
         totalDescent: meta.totalDescent ?? null,
+        tags: r.tags ? r.tags.split(",") : [],
       };
     }),
   });
@@ -88,10 +93,12 @@ export async function uploadActivity(req: Request, env: Env): Promise<Response> 
   if (fit.size > MAX_FIT_BYTES) return error(413, "fit file too large");
   if (parsed.size > MAX_JSON_BYTES) return error(413, "parsed json too large");
 
+  let parsedObj: Record<string, unknown>;
   let parsedMeta: ParsedMeta;
   try {
     const text = await parsed.text();
-    parsedMeta = extractMeta(JSON.parse(text), fileName);
+    parsedObj = JSON.parse(text);
+    parsedMeta = extractMeta(parsedObj, fileName);
   } catch {
     return error(400, "parsed json invalid");
   }
@@ -118,18 +125,28 @@ export async function uploadActivity(req: Request, env: Env): Promise<Response> 
   });
 
   const metaJson = JSON.stringify(parsedMeta.meta);
+  const zones = await loadUserZones(env, user.id);
+  const tags = deriveTags({
+    zones,
+    laps: (parsedObj.segments as Parameters<typeof deriveTags>[0]["laps"]) ??
+          (parsedObj.laps as Parameters<typeof deriveTags>[0]["laps"]) ?? [],
+    records: (parsedObj.records as Parameters<typeof deriveTags>[0]["records"]) ?? [],
+    totalDistance: parsedMeta.totalDistance ?? 0,
+    totalAscent: parsedMeta.meta.totalAscent ?? null,
+  });
 
+  const writes: D1PreparedStatement[] = [];
   if (existing) {
-    await env.DB.prepare(
-      `UPDATE activities SET
-         start_time = ?1, sport = ?2, workout_type = ?3,
-         total_distance = ?4, total_elapsed_time = ?5,
-         fit_r2_key = ?6, json_r2_key = ?7,
-         fit_size = ?8, json_size = ?9,
-         uploaded_at = ?10, meta = ?11, meta_version = ?12
-       WHERE id = ?13 AND user_id = ?14`,
-    )
-      .bind(
+    writes.push(
+      env.DB.prepare(
+        `UPDATE activities SET
+           start_time = ?1, sport = ?2, workout_type = ?3,
+           total_distance = ?4, total_elapsed_time = ?5,
+           fit_r2_key = ?6, json_r2_key = ?7,
+           fit_size = ?8, json_size = ?9,
+           uploaded_at = ?10, meta = ?11, meta_version = ?12
+         WHERE id = ?13 AND user_id = ?14`,
+      ).bind(
         parsedMeta.startTime,
         parsedMeta.sport,
         parsedMeta.workoutType,
@@ -144,18 +161,18 @@ export async function uploadActivity(req: Request, env: Env): Promise<Response> 
         META_VERSION,
         id,
         user.id,
-      )
-      .run();
+      ),
+    );
   } else {
-    await env.DB.prepare(
-      `INSERT INTO activities
-         (id, user_id, file_name, start_time, sport, workout_type,
-          total_distance, total_elapsed_time,
-          fit_r2_key, json_r2_key, fit_size, json_size, uploaded_at,
-          meta, meta_version)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)`,
-    )
-      .bind(
+    writes.push(
+      env.DB.prepare(
+        `INSERT INTO activities
+           (id, user_id, file_name, start_time, sport, workout_type,
+            total_distance, total_elapsed_time,
+            fit_r2_key, json_r2_key, fit_size, json_size, uploaded_at,
+            meta, meta_version)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)`,
+      ).bind(
         id,
         user.id,
         fileName,
@@ -171,11 +188,20 @@ export async function uploadActivity(req: Request, env: Env): Promise<Response> 
         now,
         metaJson,
         META_VERSION,
-      )
-      .run();
+      ),
+    );
   }
+  writes.push(env.DB.prepare("DELETE FROM activity_tags WHERE activity_id = ?1").bind(id));
+  for (const tag of tags) {
+    writes.push(
+      env.DB.prepare(
+        "INSERT INTO activity_tags (activity_id, tag) VALUES (?1, ?2)",
+      ).bind(id, tag),
+    );
+  }
+  await env.DB.batch(writes);
 
-  return json({ ok: true, id, fileName });
+  return json({ ok: true, id, fileName, tags });
 }
 
 export async function downloadActivityFit(
@@ -242,6 +268,7 @@ export async function deleteActivity(
 
   await env.FIT_BUCKET.delete(row.fit_r2_key).catch(() => {});
   await env.FIT_BUCKET.delete(row.json_r2_key).catch(() => {});
+  // activity_tags rows cascade via FK.
   await env.DB.prepare("DELETE FROM activities WHERE id = ?1 AND user_id = ?2")
     .bind(id, user.id)
     .run();

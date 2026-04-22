@@ -7,15 +7,32 @@ export const TOOL_DEFINITIONS = [
   {
     name: "list_activities",
     description:
-      "List the user's activities with optional filters. Returns metadata only (including workout label and elevation gain/loss; no per-record data).",
+      "List the user's activities with optional filters. Returns metadata only (including workout label, elevation gain/loss, and tags; no per-record data).",
     inputSchema: {
       type: "object",
       properties: {
         from: { type: "string", description: "ISO date inclusive lower bound (e.g. 2026-01-01)" },
         to: { type: "string", description: "ISO date inclusive upper bound" },
         sport: { type: "string" },
-        workout_type: { type: "string" },
+        workout_type: { type: "string", description: "Legacy single-value filter; prefer `tags`." },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Tag names to filter on (AND across values). Examples: intervals, hilly, threshold, vo2, anaerobic, hill-intervals, progressive, strides, race, easy, steady, tempo.",
+        },
         limit: { type: "number", description: "Max rows (default 100, max 500)" },
+      },
+    },
+  },
+  {
+    name: "tag_counts",
+    description:
+      "Return the number of the user's activities carrying each tag. Useful for populating the filter chip row or summarizing a training block.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "ISO date inclusive lower bound" },
+        to: { type: "string", description: "ISO date inclusive upper bound" },
       },
     },
   },
@@ -76,6 +93,8 @@ export async function callTool(
       return getActivity(args, env, user);
     case "similar_intervals":
       return similarIntervals(args, env, user);
+    case "tag_counts":
+      return tagCounts(args, env, user);
     default:
       throw new Error(`unknown tool: ${name}`);
   }
@@ -92,21 +111,32 @@ async function listActivities(
   const to = typeof args.to === "string" ? args.to : null;
   const sport = typeof args.sport === "string" ? args.sport : null;
   const workoutType = typeof args.workout_type === "string" ? args.workout_type : null;
+  const tags = Array.isArray(args.tags)
+    ? (args.tags as unknown[]).filter((t): t is string => typeof t === "string" && t.length > 0)
+    : [];
   const limit = Math.min(Number(args.limit) || 100, 500);
 
-  const clauses = ["user_id = ?1"];
+  const clauses = ["a.user_id = ?1"];
   const binds: unknown[] = [user.id];
-  if (from) { binds.push(from); clauses.push(`start_time >= ?${binds.length}`); }
-  if (to)   { binds.push(to);   clauses.push(`start_time <= ?${binds.length}`); }
-  if (sport){ binds.push(sport); clauses.push(`sport = ?${binds.length}`); }
-  if (workoutType) { binds.push(workoutType); clauses.push(`workout_type = ?${binds.length}`); }
+  if (from) { binds.push(from); clauses.push(`a.start_time >= ?${binds.length}`); }
+  if (to)   { binds.push(to);   clauses.push(`a.start_time <= ?${binds.length}`); }
+  if (sport){ binds.push(sport); clauses.push(`a.sport = ?${binds.length}`); }
+  if (workoutType) { binds.push(workoutType); clauses.push(`a.workout_type = ?${binds.length}`); }
+  // Multi-tag AND: one EXISTS per tag.
+  for (const tag of tags) {
+    binds.push(tag);
+    clauses.push(
+      `EXISTS (SELECT 1 FROM activity_tags t WHERE t.activity_id = a.id AND t.tag = ?${binds.length})`,
+    );
+  }
 
   const rows = await env.DB.prepare(
-    `SELECT id, file_name, start_time, sport, workout_type,
-            total_distance, total_elapsed_time, uploaded_at, meta
-     FROM activities
+    `SELECT a.id, a.file_name, a.start_time, a.sport, a.workout_type,
+            a.total_distance, a.total_elapsed_time, a.uploaded_at, a.meta,
+            (SELECT GROUP_CONCAT(t.tag) FROM activity_tags t WHERE t.activity_id = a.id) AS tags
+     FROM activities a
      WHERE ${clauses.join(" AND ")}
-     ORDER BY COALESCE(start_time, '') DESC
+     ORDER BY COALESCE(a.start_time, '') DESC
      LIMIT ${limit}`,
   )
     .bind(...binds)
@@ -114,7 +144,7 @@ async function listActivities(
       id: string; file_name: string; start_time: string | null; sport: string | null;
       workout_type: string | null; total_distance: number | null;
       total_elapsed_time: number | null; uploaded_at: number;
-      meta: string | null;
+      meta: string | null; tags: string | null;
     }>();
 
   return {
@@ -126,6 +156,7 @@ async function listActivities(
         start_time: r.start_time,
         sport: r.sport,
         workout_type: r.workout_type,
+        tags: r.tags ? r.tags.split(",") : [],
         workout_label: m.workoutLabel ?? null,
         total_distance_m: r.total_distance,
         total_elapsed_s: r.total_elapsed_time,
@@ -183,7 +214,44 @@ async function getActivity(
   if (parts.has("laps")) out.laps = full.laps;
   if (parts.has("segments")) out.segments = full.segments;
   if (parts.has("records")) out.records = full.records;
+
+  const tagRows = await env.DB.prepare(
+    "SELECT tag FROM activity_tags WHERE activity_id = ?1",
+  )
+    .bind(id)
+    .all<{ tag: string }>();
+  out.tags = (tagRows.results ?? []).map((t) => t.tag);
+
   return out;
+}
+
+async function tagCounts(
+  args: Record<string, unknown>,
+  env: Env,
+  user: User,
+) {
+  const from = typeof args.from === "string" ? args.from : null;
+  const to = typeof args.to === "string" ? args.to : null;
+
+  const clauses = ["a.user_id = ?1"];
+  const binds: unknown[] = [user.id];
+  if (from) { binds.push(from); clauses.push(`a.start_time >= ?${binds.length}`); }
+  if (to)   { binds.push(to);   clauses.push(`a.start_time <= ?${binds.length}`); }
+
+  const rows = await env.DB.prepare(
+    `SELECT t.tag AS tag, COUNT(*) AS n
+     FROM activity_tags t
+     JOIN activities a ON a.id = t.activity_id
+     WHERE ${clauses.join(" AND ")}
+     GROUP BY t.tag
+     ORDER BY n DESC`,
+  )
+    .bind(...binds)
+    .all<{ tag: string; n: number }>();
+
+  const counts: Record<string, number> = {};
+  for (const r of rows.results ?? []) counts[r.tag] = r.n;
+  return { counts };
 }
 
 async function similarIntervals(

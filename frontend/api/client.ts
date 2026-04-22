@@ -18,6 +18,28 @@ export interface RemoteActivitySummary {
   fitSize: number | null;
   jsonSize: number | null;
   uploadedAt: number;
+  workoutLabel: string | null;
+  totalAscent: number | null;
+  totalDescent: number | null;
+  tags: string[];
+}
+
+export interface HrZones {
+  z1_max: number;
+  z2_max: number;
+  z3_max: number;
+  z4_max: number;
+}
+
+export interface UserSettings {
+  hr_zones: HrZones | null;
+  effective_zones: HrZones;
+}
+
+export interface AutoZonesResult {
+  derived_zones: HrZones;
+  hr_sample_count: number;
+  hard_effort_count: number;
 }
 
 export interface TokenSummary {
@@ -107,6 +129,18 @@ export const api = {
   },
   listTokens(): Promise<{ tokens: TokenSummary[] }> {
     return request("/tokens");
+  },
+  getSettings(): Promise<UserSettings> {
+    return request("/user/settings");
+  },
+  updateSettings(hr_zones: HrZones | null): Promise<{ ok: true } & UserSettings> {
+    return request("/user/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ hr_zones }),
+    });
+  },
+  autoZones(): Promise<AutoZonesResult> {
+    return request("/user/settings/auto-zones", { method: "POST" });
   },
   createToken(label: string): Promise<CreatedToken> {
     return request("/tokens", { method: "POST", body: JSON.stringify({ label }) });

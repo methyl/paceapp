@@ -24,6 +24,7 @@ import {
   deleteActivity,
 } from "./routes/activityRoutes";
 import { listTokens, createToken, revokeToken } from "./routes/tokenRoutes";
+import { getSettings, patchSettings, autoZones } from "./routes/userRoutes";
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -75,6 +76,10 @@ async function route(req: Request, env: Env, url: URL): Promise<Response> {
     if (method === "GET" && sub === "/fit") return downloadActivityFit(req, env, id);
     if (method === "GET" && sub === "/json") return downloadActivityJson(req, env, id);
   }
+
+  if (pathname === "/api/user/settings" && method === "GET") return getSettings(req, env);
+  if (pathname === "/api/user/settings" && method === "PATCH") return patchSettings(req, env);
+  if (pathname === "/api/user/settings/auto-zones" && method === "POST") return autoZones(req, env);
 
   if (pathname === "/api/tokens" && method === "GET") return listTokens(req, env);
   if (pathname === "/api/tokens" && method === "POST") return createToken(req, env);
