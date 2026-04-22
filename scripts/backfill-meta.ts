@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveMeta } from "../workers/src/meta";
+import { deriveMeta, META_VERSION } from "../workers/src/meta";
 
 const DB = "paceapp";
 const BUCKET = "paceapp-fit";
@@ -32,7 +32,9 @@ function fetchR2(key: string, dest: string): void {
 }
 
 const rows = query<{ id: string; json_r2_key: string }>(
-  "SELECT id, json_r2_key FROM activities WHERE meta IS NULL OR meta = '' OR meta = '{}'",
+  `SELECT id, json_r2_key FROM activities
+   WHERE meta IS NULL OR meta = '' OR meta = '{}'
+      OR COALESCE(CAST(json_extract(meta, '$.version') AS INTEGER), 0) < ${META_VERSION}`,
 );
 
 if (rows.length === 0) {

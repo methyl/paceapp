@@ -1,12 +1,13 @@
 /**
  * Flexible metadata extracted from a parsed ParsedActivity JSON. Persisted
  * as a JSON blob in `activities.meta`. Extend this interface and the logic
- * in `deriveMeta` to add new fields — no schema migration required.
- *
- * Shared between the Pages Functions (upload + MCP) and the standalone
- * backfill worker (workers/backfill).
+ * in `deriveMeta` to add new fields — and bump META_VERSION so the backfill
+ * script (scripts/backfill-meta.ts) re-derives existing rows on next deploy.
  */
+export const META_VERSION = 1;
+
 export interface ActivityMeta {
+  version?: number;
   workoutLabel?: string;
   totalAscent?: number;
   totalDescent?: number;
@@ -17,7 +18,7 @@ export function deriveMeta(obj: unknown): ActivityMeta {
     workoutLabel?: string;
     records?: Array<{ altitude?: number }>;
   };
-  const meta: ActivityMeta = {};
+  const meta: ActivityMeta = { version: META_VERSION };
   if (typeof a?.workoutLabel === "string") meta.workoutLabel = a.workoutLabel;
   const { ascent, descent } = elevationFromRecords(a?.records);
   if (ascent != null) meta.totalAscent = ascent;
