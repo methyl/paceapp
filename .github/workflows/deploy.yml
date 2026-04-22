@@ -35,11 +35,13 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: d1 migrations apply paceapp --remote
 
-      - name: Backfill activities.meta
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: bun scripts/backfill-meta.ts
+      - name: Deploy meta-backfill worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/meta-backfill
+          command: deploy
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
@@ -47,3 +49,14 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist --project-name=paceapp --branch=main
+
+      # Kick off the backfill sweep right after deploy — scans for rows
+      # whose meta_version is behind META_VERSION and enqueues them onto
+      # the backfill queue. Returns in a few seconds even at millions of
+      # rows; the queue consumer drains in the background. The cron on
+      # the worker picks up any leftovers if this call is missed.
+      - name: Trigger meta-backfill sweep
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${{ secrets.META_BACKFILL_SWEEP_SECRET }}" \
+            "${{ secrets.META_BACKFILL_WORKER_URL }}/sweep"

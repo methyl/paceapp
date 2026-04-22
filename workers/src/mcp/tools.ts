@@ -1,7 +1,7 @@
 import type { Env } from "../env";
 import type { User } from "../auth";
 import { findMatches, type Reference, type LoadCategory } from "./matching";
-import { parseMeta, deriveMeta } from "../meta";
+import { parseMeta, deriveMeta, META_VERSION } from "../meta";
 
 export const TOOL_DEFINITIONS = [
   {
@@ -165,9 +165,9 @@ async function getActivity(
   if (!row.meta || Object.keys(m).length === 0) {
     m = deriveMeta(full);
     await env.DB.prepare(
-      "UPDATE activities SET meta = ?1 WHERE id = ?2 AND user_id = ?3",
+      "UPDATE activities SET meta = ?1, meta_version = ?2 WHERE id = ?3 AND user_id = ?4",
     )
-      .bind(JSON.stringify(m), id, user.id)
+      .bind(JSON.stringify(m), META_VERSION, id, user.id)
       .run();
   }
 

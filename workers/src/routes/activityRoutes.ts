@@ -1,7 +1,7 @@
 import type { Env } from "../env";
 import { json, error } from "../http";
 import { getUserFromRequest } from "../auth";
-import { type ActivityMeta, deriveMeta, parseMeta } from "../meta";
+import { type ActivityMeta, META_VERSION, deriveMeta, parseMeta } from "../meta";
 
 const MAX_FIT_BYTES = 20 * 1024 * 1024; // 20 MB per FIT file
 const MAX_JSON_BYTES = 30 * 1024 * 1024; // 30 MB parsed JSON
@@ -126,8 +126,8 @@ export async function uploadActivity(req: Request, env: Env): Promise<Response> 
          total_distance = ?4, total_elapsed_time = ?5,
          fit_r2_key = ?6, json_r2_key = ?7,
          fit_size = ?8, json_size = ?9,
-         uploaded_at = ?10, meta = ?11
-       WHERE id = ?12 AND user_id = ?13`,
+         uploaded_at = ?10, meta = ?11, meta_version = ?12
+       WHERE id = ?13 AND user_id = ?14`,
     )
       .bind(
         parsedMeta.startTime,
@@ -141,6 +141,7 @@ export async function uploadActivity(req: Request, env: Env): Promise<Response> 
         parsedBytes.byteLength,
         now,
         metaJson,
+        META_VERSION,
         id,
         user.id,
       )
@@ -150,8 +151,9 @@ export async function uploadActivity(req: Request, env: Env): Promise<Response> 
       `INSERT INTO activities
          (id, user_id, file_name, start_time, sport, workout_type,
           total_distance, total_elapsed_time,
-          fit_r2_key, json_r2_key, fit_size, json_size, uploaded_at, meta)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`,
+          fit_r2_key, json_r2_key, fit_size, json_size, uploaded_at,
+          meta, meta_version)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)`,
     )
       .bind(
         id,
@@ -168,6 +170,7 @@ export async function uploadActivity(req: Request, env: Env): Promise<Response> 
         parsedBytes.byteLength,
         now,
         metaJson,
+        META_VERSION,
       )
       .run();
   }

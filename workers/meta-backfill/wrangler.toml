@@ -1,0 +1,35 @@
+name = "paceapp-meta-backfill"
+main = "src/index.ts"
+compatibility_date = "2025-01-15"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Sweep stale meta_version rows every 5 minutes as a safety net, in case
+# the deploy-time /sweep trigger is missed.
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "paceapp"
+database_id = "5a4bd2b8-51f1-45f7-8cb6-dc5de0c00daa"
+
+[[r2_buckets]]
+binding = "FIT_BUCKET"
+bucket_name = "paceapp-fit"
+
+# Producer side — the /sweep endpoint and the cron trigger both push
+# activity IDs onto this queue.
+[[queues.producers]]
+binding = "BACKFILL_QUEUE"
+queue = "paceapp-meta-backfill"
+
+# Consumer side — same Worker handles the messages. 100 msgs/batch gives
+# us one D1 .batch() per delivery; 10 concurrent consumers bounds R2 fan-out.
+[[queues.consumers]]
+queue = "paceapp-meta-backfill"
+max_batch_size = 100
+max_batch_timeout = 10
+max_concurrency = 10
+max_retries = 3
+dead_letter_queue = "paceapp-meta-backfill-dlq"

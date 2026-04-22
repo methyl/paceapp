@@ -19,6 +19,7 @@
   "include": [
     "workers/src/**/*.ts",
     "workers/email/src/**/*.ts",
+    "workers/meta-backfill/src/**/*.ts",
     "functions/**/*.ts"
   ]
 }
