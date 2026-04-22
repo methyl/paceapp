@@ -10,6 +10,8 @@ interface LibraryRailProps {
   onSelect: (a: ParsedActivity) => void;
   onHover?: (a: ParsedActivity | null) => void;
   hoveredId?: string | null;
+  pinnedCompareId?: string | null;
+  onTogglePinCompare?: (a: ParsedActivity) => void;
 }
 
 const TYPE_ORDER: WorkoutType[] = [
@@ -145,16 +147,36 @@ function getSubFilterOptions(
 interface RunRowProps {
   activity: ParsedActivity;
   selected: boolean;
+  isPinnedCompare?: boolean;
+  compareDisabled?: boolean;
   compact?: boolean;
   onClick: () => void;
   onHover?: (a: ParsedActivity | null) => void;
+  onTogglePinCompare?: (a: ParsedActivity) => void;
 }
 
-function RunRow({ activity, selected, compact, onClick, onHover }: RunRowProps) {
+function PinIcon({ filled }: { filled?: boolean }) {
+  return (
+    <svg width={11} height={11} viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth={2}>
+      <path d="M12 2 8 6v6l-4 4h7v6l1 2 1-2v-6h7l-4-4V6l-4-4z" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function RunRow({
+  activity,
+  selected,
+  isPinnedCompare,
+  compareDisabled,
+  compact,
+  onClick,
+  onHover,
+  onTogglePinCompare,
+}: RunRowProps) {
   const color = WORKOUT_COLORS[activity.workoutType];
   return (
     <div
-      className={`run-row ${selected ? "selected" : ""}`}
+      className={`run-row ${selected ? "selected" : ""} ${isPinnedCompare ? "pinned-compare" : ""}`}
       onClick={onClick}
       onMouseEnter={() => onHover?.(activity)}
       onMouseLeave={() => onHover?.(null)}
@@ -194,6 +216,20 @@ function RunRow({ activity, selected, compact, onClick, onHover }: RunRowProps) 
           <span className="lap-u"> km</span>
         </div>
       </div>
+      {onTogglePinCompare && !compareDisabled && (
+        <button
+          type="button"
+          className={`run-compare-btn ${isPinnedCompare ? "pinned" : ""}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onTogglePinCompare(activity);
+          }}
+          title={isPinnedCompare ? "Unpin compare" : "Pin as compare"}
+        >
+          <PinIcon filled={isPinnedCompare} />
+          <span>{isPinnedCompare ? "Pinned" : "Compare"}</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -204,6 +240,8 @@ export default function LibraryRail({
   onSelect,
   onHover,
   hoveredId,
+  pinnedCompareId,
+  onTogglePinCompare,
 }: LibraryRailProps) {
   const [filter, setFilter] = useState<WorkoutType | "all">("all");
   const [subFilter, setSubFilter] = useState<string | null>(null);
@@ -323,8 +361,11 @@ export default function LibraryRail({
                 key={a.id}
                 activity={a}
                 selected={a.id === selectedId}
+                isPinnedCompare={a.id === pinnedCompareId}
+                compareDisabled={a.id === selectedId}
                 onClick={() => onSelect(a)}
                 onHover={onHover}
+                onTogglePinCompare={onTogglePinCompare}
               />
             ))}
           </div>
@@ -368,9 +409,12 @@ export default function LibraryRail({
                 key={a.id}
                 activity={a}
                 selected={a.id === hoveredId}
+                isPinnedCompare={a.id === pinnedCompareId}
+                compareDisabled={a.id === selectedId}
                 compact
                 onClick={() => onSelect(a)}
                 onHover={onHover}
+                onTogglePinCompare={onTogglePinCompare}
               />
             ))}
           </div>

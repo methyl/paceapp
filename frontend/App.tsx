@@ -49,6 +49,7 @@ function App() {
   const [activities, setActivities] = useState<ParsedActivity[]>([]);
   const [selected, setSelected] = useState<ParsedActivity | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [pinnedCompareId, setPinnedCompareId] = useState<string | null>(null);
   const [view, setView] = useState<View>("library");
   const [loading, setLoading] = useState(true);
   const [loadProgress, setLoadProgress] = useState({ done: 0, total: 0 });
@@ -259,13 +260,38 @@ function App() {
 
   const showEmptyState = !loading && activities.length === 0;
 
-  // Compare run: whichever row is being hovered, when it's different from selected.
+  // Compare run: pinned takes precedence over hover. Pinned sticks until the
+  // user unpins; otherwise hover previews the comparison live.
   const hoveredRun = useMemo(
     () => (hoveredId ? activities.find((a) => a.id === hoveredId) ?? null : null),
     [hoveredId, activities]
   );
+  const pinnedRun = useMemo(
+    () =>
+      pinnedCompareId ? activities.find((a) => a.id === pinnedCompareId) ?? null : null,
+    [pinnedCompareId, activities]
+  );
   const compareRun =
-    hoveredRun && selected && hoveredRun.id !== selected.id ? hoveredRun : null;
+    pinnedRun && pinnedRun.id !== selected?.id
+      ? pinnedRun
+      : hoveredRun && selected && hoveredRun.id !== selected.id
+      ? hoveredRun
+      : null;
+
+  const handleTogglePinCompare = useCallback(
+    (a: ParsedActivity) => {
+      setPinnedCompareId((cur) => (cur === a.id ? null : a.id));
+    },
+    []
+  );
+  const handleUnpinCompare = useCallback(() => setPinnedCompareId(null), []);
+
+  // Auto-unpin if the pinned run becomes the selected run (no self-compare).
+  useEffect(() => {
+    if (pinnedCompareId && selected?.id === pinnedCompareId) {
+      setPinnedCompareId(null);
+    }
+  }, [selected, pinnedCompareId]);
 
   return (
     <div className="app">
@@ -406,6 +432,8 @@ function App() {
             onSelect={handleSelect}
             onHover={(a) => setHoveredId(a?.id ?? null)}
             hoveredId={hoveredId}
+            pinnedCompareId={pinnedCompareId}
+            onTogglePinCompare={handleTogglePinCompare}
           />
 
           <main style={{ overflow: "auto", background: "#fff", minWidth: 0 }}>
@@ -434,6 +462,8 @@ function App() {
                 <RunDetailView
                   activity={selected}
                   compareRun={compareRun}
+                  comparePinned={!!(pinnedRun && pinnedRun.id === compareRun?.id)}
+                  onUnpinCompare={handleUnpinCompare}
                   timeFilteredRunning={timeFilteredRunning}
                   showOriginalLaps={showOriginalLaps}
                   onToggleLaps={() => setShowOriginalLaps((v) => !v)}
@@ -543,6 +573,8 @@ function PageHeader({ title, subtitle }: { title: string; subtitle?: string }) {
 interface RunDetailViewProps {
   activity: ParsedActivity;
   compareRun: ParsedActivity | null;
+  comparePinned: boolean;
+  onUnpinCompare: () => void;
   timeFilteredRunning: ParsedActivity[];
   showOriginalLaps: boolean;
   onToggleLaps: () => void;
@@ -562,6 +594,8 @@ interface RunDetailViewProps {
 function RunDetailView({
   activity,
   compareRun,
+  comparePinned,
+  onUnpinCompare,
   timeFilteredRunning,
   showOriginalLaps,
   onToggleLaps,
@@ -601,7 +635,10 @@ function RunDetailView({
       : compareRun.laps;
   }, [compareRun, showOriginalLaps]);
 
-  const kinds = useMemo(() => classifyLaps(lapsSource), [lapsSource]);
+  const kinds = useMemo(
+    () => classifyLaps(lapsSource, activity.workoutType),
+    [lapsSource, activity.workoutType]
+  );
   const rests = useMemo(
     () => (lapFilter === "all" ? restBands(lapsSource, kinds) : []),
     [lapsSource, kinds, lapFilter]
@@ -647,6 +684,8 @@ function RunDetailView({
         summary={activity.summary}
         compare={compareRun?.summary ?? null}
         compareLabel={compareLabel}
+        comparePinned={comparePinned}
+        onUnpinCompare={onUnpinCompare}
       />
 
       <div className="card" style={{ overflow: "hidden", marginBottom: 24 }}>
@@ -678,7 +717,9 @@ function RunDetailView({
 
       <TimeSeriesChart
         records={activity.records}
+        laps={lapsSource}
         compareRecords={compareRun?.records ?? null}
+        compareLaps={cmpLapsSource}
         compareLabel={compareLabel}
         restBands={rests.length > 0 ? rests : undefined}
       />
@@ -709,7 +750,9 @@ function RunDetailView({
 
       <LapTable
         laps={lapsSource}
+        workoutType={activity.workoutType}
         compareLaps={cmpLapsSource}
+        compareWorkoutType={compareRun?.workoutType}
         kinds={kinds}
         filter={lapFilter}
         onFilterChange={onLapFilterChange}
@@ -718,9 +761,11 @@ function RunDetailView({
 
       <DynamicsCharts
         laps={lapsSource}
+        workoutType={activity.workoutType}
         kinds={kinds}
         filter={lapFilter}
         compareLaps={cmpLapsSource}
+        compareWorkoutType={compareRun?.workoutType}
         compareLabel={compareLabel}
       />
 

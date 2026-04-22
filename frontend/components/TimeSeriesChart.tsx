@@ -1,10 +1,14 @@
 import { useMemo, useRef, useState } from "react";
-import type { RecordPoint } from "../types";
+import type { LapSummary, RecordPoint } from "../types";
 import { paceSecToStr } from "../lapUtils";
 
 interface TimeSeriesChartProps {
   records: RecordPoint[];
+  /** Current run's laps — used to anchor compare data lap-by-lap */
+  laps?: LapSummary[];
   compareRecords?: RecordPoint[] | null;
+  /** Compare run's laps — remapped onto the current run's lap x-extents */
+  compareLaps?: LapSummary[] | null;
   compareLabel?: string | null;
   restBands?: Array<[number, number]>;
   /** Height in pixels — scales to number of active channels */
@@ -70,8 +74,6 @@ function downsample(records: RecordPoint[], target = 120): RecordPoint[] {
 }
 
 // Resample a records series onto a fixed number of evenly-spaced distance steps.
-// Returns [0..n-1] indexed values — the x-axis is distance, so two runs can be
-// compared over the same normalized distance fraction.
 function resampleByDistance(
   records: RecordPoint[],
   channel: Channel,
@@ -88,6 +90,77 @@ function resampleByDistance(
       cursor++;
     }
     out[i] = channel.derive(records[cursor]);
+  }
+  return out;
+}
+
+// Look up a channel value at a specific distance via binary search.
+function sampleAtDistance(
+  records: RecordPoint[],
+  distanceM: number,
+  channel: Channel
+): number | null {
+  if (records.length === 0) return null;
+  const last = records[records.length - 1].distance;
+  if (distanceM <= 0) return channel.derive(records[0]);
+  if (distanceM >= last) return channel.derive(records[records.length - 1]);
+  let lo = 0;
+  let hi = records.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (records[mid].distance < distanceM) lo = mid + 1;
+    else hi = mid;
+  }
+  return channel.derive(records[lo]);
+}
+
+// Cumulative start-distance (meters) for each lap, plus a final total entry.
+// boundaries[i] = distance at the start of lap i; boundaries[laps.length] = total.
+function lapBoundaries(laps: LapSummary[]): number[] {
+  const out: number[] = [0];
+  let cursor = 0;
+  for (const l of laps) {
+    cursor += l.totalDistance;
+    out.push(cursor);
+  }
+  return out;
+}
+
+// Remap compare samples onto the current run's lap x-extents: for each
+// normalized x position on the current run, find which lap it falls in and
+// the fraction through that lap, then sample the compare run at the matching
+// fraction of its same-indexed lap. Work/rest laps line up like-for-like —
+// even when their raw durations differ between runs.
+function alignedCompareSamples(
+  cmpRecords: RecordPoint[],
+  curLaps: LapSummary[],
+  cmpLaps: LapSummary[],
+  channel: Channel,
+  n: number
+): (number | null)[] {
+  if (cmpRecords.length === 0 || curLaps.length === 0 || cmpLaps.length === 0) {
+    return new Array(n).fill(null);
+  }
+  const curB = lapBoundaries(curLaps);
+  const cmpB = lapBoundaries(cmpLaps);
+  const maxLaps = Math.min(curLaps.length, cmpLaps.length);
+  const curTotal = curB[curLaps.length];
+  const out: (number | null)[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const xFrac = i / (n - 1);
+    const curDist = xFrac * curTotal;
+    // Find current run's lap for this x
+    let li = 0;
+    while (li < curLaps.length - 1 && curDist >= curB[li + 1]) li++;
+    if (li >= maxLaps) {
+      out[i] = null;
+      continue;
+    }
+    const curLapLen = curLaps[li].totalDistance;
+    const fracInLap = curLapLen > 0 ? (curDist - curB[li]) / curLapLen : 0;
+    const cmpLapLen = cmpLaps[li].totalDistance;
+    const cmpDist = cmpB[li] + fracInLap * cmpLapLen;
+    out[i] = sampleAtDistance(cmpRecords, cmpDist, channel);
   }
   return out;
 }
@@ -117,7 +190,9 @@ function elevationGainLoss(arr: (number | null)[]): { gain: number; loss: number
 
 export default function TimeSeriesChart({
   records,
+  laps,
   compareRecords,
+  compareLaps,
   compareLabel,
   restBands,
   baseHeight = 120,
@@ -139,6 +214,11 @@ export default function TimeSeriesChart({
 
   const N = 100;
 
+  // When both runs have laps, remap compare samples lap-by-lap so work/rest
+  // periods line up even when their raw durations differ (different warmup
+  // length, different rep count, etc). Fallback to raw distance resampling.
+  const aligned = !!(laps && laps.length && compareLaps && compareLaps.length);
+
   // Per-channel resampled arrays (current + compare)
   const samples = useMemo(() => {
     const map: Record<ChannelKey, { data: (number | null)[]; compare: (number | null)[] | null }> = {
@@ -149,10 +229,16 @@ export default function TimeSeriesChart({
     };
     for (const c of CHANNELS) {
       map[c.key].data = resampleByDistance(ds, c, N);
-      map[c.key].compare = dsCmp ? resampleByDistance(dsCmp, c, N) : null;
+      if (!dsCmp) {
+        map[c.key].compare = null;
+      } else if (aligned && laps && compareLaps) {
+        map[c.key].compare = alignedCompareSamples(dsCmp, laps, compareLaps, c, N);
+      } else {
+        map[c.key].compare = resampleByDistance(dsCmp, c, N);
+      }
     }
     return map;
-  }, [ds, dsCmp]);
+  }, [ds, dsCmp, aligned, laps, compareLaps]);
 
   const distanceKm = useMemo(() => {
     if (records.length === 0) return 0;
@@ -208,7 +294,7 @@ export default function TimeSeriesChart({
                 <b style={{ color: "var(--ink-2)", fontWeight: 600 }}>
                   {compareLabel ?? "compare"}
                 </b>
-                {" "}· x-axis = distance
+                {aligned ? " · aligned lap-by-lap" : " · x-axis = distance"}
               </>
             ) : (
               "Hover to inspect — x-axis = distance"

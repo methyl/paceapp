@@ -1,12 +1,14 @@
 import { useMemo } from "react";
-import type { LapSummary } from "../types";
+import type { LapSummary, WorkoutType } from "../types";
 import type { LapFilter, LapKind } from "../lapUtils";
 import { classifyLaps } from "../lapUtils";
 
 interface DynamicsChartsProps {
   laps: LapSummary[];
+  workoutType?: WorkoutType;
   /** Optional compare run laps (positional alignment by index) */
   compareLaps?: LapSummary[] | null;
+  compareWorkoutType?: WorkoutType;
   compareLabel?: string | null;
   /** Respect the lap filter from the run-detail view */
   filter?: LapFilter;
@@ -348,12 +350,17 @@ function avgOf(arr: (number | null)[]): number | null {
 
 export default function DynamicsCharts({
   laps,
+  workoutType,
   compareLaps,
+  compareWorkoutType,
   compareLabel,
   filter = "all",
   kinds: kindsProp,
 }: DynamicsChartsProps) {
-  const kinds = useMemo(() => kindsProp ?? classifyLaps(laps), [laps, kindsProp]);
+  const kinds = useMemo(
+    () => kindsProp ?? classifyLaps(laps, workoutType),
+    [laps, workoutType, kindsProp]
+  );
 
   const lapsForChart = useMemo(
     () => (filter === "working" ? laps.filter((_, i) => kinds[i] === "working") : laps),
@@ -365,8 +372,8 @@ export default function DynamicsCharts({
   );
 
   const cmpKinds = useMemo(
-    () => (compareLaps ? classifyLaps(compareLaps) : null),
-    [compareLaps]
+    () => (compareLaps ? classifyLaps(compareLaps, compareWorkoutType) : null),
+    [compareLaps, compareWorkoutType]
   );
   const cmpLapsForChart = useMemo(() => {
     if (!compareLaps || !cmpKinds) return null;

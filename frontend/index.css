@@ -468,7 +468,12 @@ a { color: inherit; }
 
 /* ------------- Library rail ------------- */
 .rail {
+  /* As a grid child, default min-height is `auto` which makes the row grow
+     to fit content and breaks inner scroll. min-height: 0 + overflow hidden
+     clamps the rail to its grid track so .rail-list can actually scroll. */
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
   border-right: 1px solid var(--hair);
   display: flex; flex-direction: column;
   background: #fff;
@@ -564,11 +569,49 @@ a { color: inherit; }
   cursor: pointer;
   transition: background .12s;
   border-left: 2px solid transparent;
+  position: relative;
 }
 .run-row:hover { background: var(--bg-sunk); }
 .run-row.selected {
   background: var(--bg-sunk);
   border-left-color: var(--ink);
+}
+.run-row.pinned-compare {
+  border-left-color: var(--accent);
+}
+
+.run-compare-btn {
+  position: absolute;
+  right: 10px; top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 999px;
+  border: 0.5px solid var(--hair-strong);
+  background: #fff;
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s, background .12s, color .12s, border-color .12s;
+  box-shadow: var(--sh-1);
+}
+.run-row:hover .run-compare-btn { opacity: 1; }
+.run-compare-btn:hover {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+}
+.run-compare-btn.pinned {
+  opacity: 1;
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.run-compare-btn.pinned:hover {
+  background: var(--accent-ink);
+  border-color: var(--accent-ink);
 }
 .run-row .run-thumb {
   width: 36px; height: 28px;

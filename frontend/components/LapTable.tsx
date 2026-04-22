@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { LapSummary } from "../types";
+import type { LapSummary, WorkoutType } from "../types";
 import { formatTime } from "../parseFit";
 import {
   classifyLaps,
@@ -12,6 +12,8 @@ interface LapTableProps {
   laps: LapSummary[];
   title?: string;
   compareLaps?: LapSummary[] | null;
+  compareWorkoutType?: WorkoutType;
+  workoutType?: WorkoutType;
   filter?: LapFilter;
   onFilterChange?: (f: LapFilter) => void;
   /** Optional — if parent already classified, use that instead of re-classifying */
@@ -114,19 +116,24 @@ export default function LapTable({
   laps,
   title,
   compareLaps,
+  compareWorkoutType,
+  workoutType,
   filter: filterProp,
   onFilterChange,
   kinds: kindsProp,
 }: LapTableProps) {
-  const kinds = useMemo(() => kindsProp ?? classifyLaps(laps), [laps, kindsProp]);
+  const kinds = useMemo(
+    () => kindsProp ?? classifyLaps(laps, workoutType),
+    [laps, workoutType, kindsProp]
+  );
   const hasRest = kinds.some((k) => k === "rest");
   const filter: LapFilter = filterProp ?? "all";
 
   const cmpHasRest = useMemo(() => {
     if (!compareLaps) return false;
-    const cmpKinds = classifyLaps(compareLaps);
+    const cmpKinds = classifyLaps(compareLaps, compareWorkoutType);
     return cmpKinds.some((k) => k === "rest");
-  }, [compareLaps]);
+  }, [compareLaps, compareWorkoutType]);
 
   const visibleLaps = useMemo(() => {
     if (filter === "working") return laps.filter((_, i) => kinds[i] !== "rest");

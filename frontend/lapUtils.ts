@@ -1,4 +1,4 @@
-import type { LapSummary } from "./types";
+import type { LapSummary, WorkoutType } from "./types";
 
 export type LapKind = "working" | "rest";
 export type LapFilter = "all" | "working";
@@ -18,25 +18,45 @@ export function paceSecToStr(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-// Classify laps as working or rest based on pace relative to the fastest lap.
-// Rest laps run ≥15% slower per km than the fastest pace — the rough threshold
-// that separates recovery jogs from actual work intervals.
-export function classifyLaps(laps: LapSummary[]): LapKind[] {
+/**
+ * Work/rest classification for lap rows.
+ *
+ * Uses the same threshold logic as `labeller.ts` to stay consistent with the
+ * workout title: compare each lap's speed against the median × fastMultiplier.
+ * Multiplier is strict (1.05) for interval-like types and looser (1.15) for
+ * easy/steady.
+ *
+ * For everything that isn't an interval workout, the work/rest distinction
+ * is noise — we return all "working" so callers can hide tags/filters.
+ */
+export function classifyLaps(
+  laps: LapSummary[],
+  workoutType?: WorkoutType
+): LapKind[] {
   if (laps.length === 0) return [];
+  // Only intervals get meaningful work/rest classification. Everything else
+  // is a continuous effort; tagging individual laps confuses more than it helps.
+  if (workoutType && workoutType !== "intervals") {
+    return laps.map(() => "working");
+  }
+
   const paces = laps
     .map((l) => parsePaceToSec(l.avgPace))
     .filter((v): v is number => v != null);
   if (paces.length === 0) return laps.map(() => "working");
-  const fastest = Math.min(...paces);
-  const threshold = fastest * 1.15;
+
+  const sorted = [...paces].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  // Lower pace = faster. Work threshold = median / 1.05.
+  const threshold = median / 1.05;
+
   return laps.map((l) => {
     const p = parsePaceToSec(l.avgPace);
-    return p != null && p > threshold ? "rest" : "working";
+    return p != null && p < threshold ? "working" : "rest";
   });
 }
 
 // Compute cumulative-distance x-axis bands (0..1) for rest laps.
-// Used by TimeSeriesChart to shade rest-zone backgrounds across all panels.
 export function restBands(
   laps: LapSummary[],
   kinds: LapKind[]

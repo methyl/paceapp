@@ -6,6 +6,8 @@ interface SummaryProps {
   summary: ActivitySummary;
   compare?: ActivitySummary | null;
   compareLabel?: string | null;
+  comparePinned?: boolean;
+  onUnpinCompare?: () => void;
 }
 
 type MastField = {
@@ -124,7 +126,13 @@ function StripCell({ field, hasCompare }: { field: MastField; hasCompare: boolea
   );
 }
 
-export default function Summary({ summary, compare, compareLabel }: SummaryProps) {
+export default function Summary({
+  summary,
+  compare,
+  compareLabel,
+  comparePinned,
+  onUnpinCompare,
+}: SummaryProps) {
   const hasCompare = !!compare;
 
   const curDist = summary.totalDistance / 1000;
@@ -242,10 +250,13 @@ export default function Summary({ summary, compare, compareLabel }: SummaryProps
             display: "inline-flex",
             alignItems: "center",
             gap: 8,
-            padding: "3px 10px",
+            padding: "3px 4px 3px 10px",
             borderRadius: 999,
-            background: "var(--bg-sunk)",
-            border: "1px dashed var(--hair-strong)",
+            background: comparePinned ? "var(--accent-soft)" : "var(--bg-sunk)",
+            border: comparePinned
+              ? "1px solid var(--accent)"
+              : "1px dashed var(--hair-strong)",
+            color: comparePinned ? "var(--accent-ink)" : "var(--ink-2)",
           }}
         >
           <span
@@ -253,12 +264,37 @@ export default function Summary({ summary, compare, compareLabel }: SummaryProps
               width: 8,
               height: 8,
               borderRadius: 2,
-              background: "var(--ink)",
-              opacity: 0.35,
+              background: comparePinned ? "var(--accent)" : "var(--ink)",
+              opacity: comparePinned ? 1 : 0.35,
             }}
           />
-          Comparing to{" "}
-          <b style={{ color: "var(--ink)", fontWeight: 600 }}>{compareLabel ?? "—"}</b>
+          {comparePinned ? "Pinned to" : "Comparing to"}{" "}
+          <b style={{ color: "inherit", fontWeight: 600 }}>{compareLabel ?? "—"}</b>
+          {comparePinned && onUnpinCompare && (
+            <button
+              type="button"
+              onClick={onUnpinCompare}
+              aria-label="Unpin compare"
+              style={{
+                width: 16,
+                height: 16,
+                marginLeft: 2,
+                border: 0,
+                borderRadius: 999,
+                background: "transparent",
+                color: "inherit",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
+              <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4}>
+                <path d="M6 6l12 12M6 18L18 6" strokeLinecap="round" />
+              </svg>
+            </button>
+          )}
         </span>
       </div>
 
