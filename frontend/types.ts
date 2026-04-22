@@ -114,4 +114,10 @@ export interface ParsedActivity {
   extended?: boolean;
   /** Raw decoded FIT messages for faithful re-export */
   rawFitMessages?: Record<string, unknown[]>;
+  /**
+   * Server-derived tags covering intensity, structure, terrain, and
+   * context. Populated client-side by joining remote activity data via
+   * fileName; absent when offline or for a not-yet-synced activity.
+   */
+  tags?: string[];
 }

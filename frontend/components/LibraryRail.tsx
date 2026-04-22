@@ -4,6 +4,63 @@ import { WORKOUT_LABELS, WORKOUT_COLORS } from "../types";
 import RunPathThumb from "./RunPathThumb";
 import { parsePaceToSec } from "../lapUtils";
 
+// Canonical tag order + display metadata. Tags not listed here still
+// render using a neutral color at the end of the list.
+const TAG_ORDER: string[] = [
+  "easy",
+  "steady",
+  "tempo",
+  "threshold",
+  "vo2",
+  "anaerobic",
+  "intervals",
+  "progressive",
+  "strides",
+  "hill-intervals",
+  "hilly",
+  "race",
+  "other",
+];
+
+const TAG_LABELS: Record<string, string> = {
+  easy: "Easy",
+  steady: "Steady",
+  tempo: "Tempo",
+  threshold: "Threshold",
+  vo2: "VO2",
+  anaerobic: "Anaerobic",
+  intervals: "Intervals",
+  progressive: "Progressive",
+  strides: "Strides",
+  "hill-intervals": "Hill intervals",
+  hilly: "Hilly",
+  race: "Race",
+  other: "Other",
+};
+
+const TAG_COLORS: Record<string, string> = {
+  easy: "#22c55e",
+  steady: "#3b82f6",
+  tempo: "#f59e0b",
+  threshold: "#f97316",
+  vo2: "#dc2626",
+  anaerobic: "#991b1b",
+  intervals: "#ef4444",
+  progressive: "#8b5cf6",
+  strides: "#a855f7",
+  "hill-intervals": "#ea580c",
+  hilly: "#14b8a6",
+  race: "#ec4899",
+  other: "#6b7280",
+};
+
+function tagColor(tag: string) {
+  return TAG_COLORS[tag] ?? "#6b7280";
+}
+function tagLabel(tag: string) {
+  return TAG_LABELS[tag] ?? tag;
+}
+
 interface LibraryRailProps {
   activities: ParsedActivity[];
   selectedId: string | null;
@@ -13,16 +70,6 @@ interface LibraryRailProps {
   pinnedCompareId?: string | null;
   onTogglePinCompare?: (a: ParsedActivity) => void;
 }
-
-const TYPE_ORDER: WorkoutType[] = [
-  "easy",
-  "steady",
-  "tempo",
-  "intervals",
-  "progressive",
-  "race",
-  "unknown",
-];
 
 function formatDay(iso?: string) {
   if (!iso) return "";
@@ -187,15 +234,32 @@ function RunRow({
       </div>
       <div className="run-main">
         <div className="run-title" title={activity.workoutLabel}>
-          <span
-            className="run-type-pill"
-            style={{
-              background: `color-mix(in oklch, ${color} 15%, transparent)`,
-              color,
-            }}
-          >
-            {WORKOUT_LABELS[activity.workoutType]}
-          </span>
+          {activity.tags && activity.tags.length > 0 ? (
+            <span className="run-tags">
+              {activity.tags.map((t) => (
+                <span
+                  key={t}
+                  className="run-type-pill"
+                  style={{
+                    background: `color-mix(in oklch, ${tagColor(t)} 15%, transparent)`,
+                    color: tagColor(t),
+                  }}
+                >
+                  {tagLabel(t)}
+                </span>
+              ))}
+            </span>
+          ) : (
+            <span
+              className="run-type-pill"
+              style={{
+                background: `color-mix(in oklch, ${color} 15%, transparent)`,
+                color,
+              }}
+            >
+              {WORKOUT_LABELS[activity.workoutType]}
+            </span>
+          )}
           <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
             {activity.workoutLabel || activity.fileName}
           </span>
@@ -243,28 +307,57 @@ export default function LibraryRail({
   pinnedCompareId,
   onTogglePinCompare,
 }: LibraryRailProps) {
-  const [filter, setFilter] = useState<WorkoutType | "all">("all");
+  // Multi-select tag filter. A run matches iff it carries *every* tag in
+  // the active set (AND semantics). Empty set = show all.
+  const [activeTags, setActiveTags] = useState<Set<string>>(() => new Set());
   const [subFilter, setSubFilter] = useState<string | null>(null);
 
-  // Reset sub-filter whenever the primary type changes — stale keys don't match new pool.
+  // Reset sub-filter whenever the tag selection changes.
   useEffect(() => {
     setSubFilter(null);
-  }, [filter]);
+  }, [activeTags]);
 
-  const typeCounts = useMemo(() => {
-    const counts: Partial<Record<WorkoutType, number>> = {};
-    for (const a of activities) counts[a.workoutType] = (counts[a.workoutType] ?? 0) + 1;
+  const tagCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const a of activities) {
+      for (const t of a.tags ?? []) counts[t] = (counts[t] ?? 0) + 1;
+    }
     return counts;
   }, [activities]);
 
-  // Pool filtered by primary type only — used to compute which sub-filter
-  // buckets are non-empty.
+  // Pool filtered by the active tag set (AND across tags). Used to drive
+  // subfilter counts and the final list.
   const typePool = useMemo(() => {
-    if (filter === "all") return activities;
-    return activities.filter((a) => a.workoutType === filter);
-  }, [activities, filter]);
+    if (activeTags.size === 0) return activities;
+    return activities.filter((a) => {
+      const tags = a.tags;
+      if (!tags) return false;
+      for (const t of activeTags) if (!tags.includes(t)) return false;
+      return true;
+    });
+  }, [activities, activeTags]);
 
-  const subOptions = useMemo(() => getSubFilterOptions(filter, typePool), [filter, typePool]);
+  // Subfilter picks up from the dominant structural tag in the active set
+  // (or nothing if the set doesn't include one).
+  const structuralTag = useMemo(() => {
+    const structural = ["intervals", "hill-intervals", "progressive", "strides", "race"] as const;
+    for (const s of structural) if (activeTags.has(s)) return s;
+    return null;
+  }, [activeTags]);
+
+  const subOptions = useMemo(
+    () => (structuralTag ? getSubFilterOptions(structuralTag as WorkoutType, typePool) : null),
+    [structuralTag, typePool],
+  );
+
+  const toggleTag = (tag: string) => {
+    setActiveTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      return next;
+    });
+  };
 
   const filtered = useMemo(() => {
     if (!subFilter || !subOptions) return typePool;
@@ -301,7 +394,13 @@ export default function LibraryRail({
     [activities, selected]
   );
 
-  const visibleTypes = TYPE_ORDER.filter((t) => (typeCounts[t] ?? 0) > 0);
+  // Canonical order first, then any unknown tags we've observed.
+  const visibleTags = useMemo(() => {
+    const seen = Object.keys(tagCounts);
+    const ordered = TAG_ORDER.filter((t) => (tagCounts[t] ?? 0) > 0);
+    const extras = seen.filter((t) => !TAG_ORDER.includes(t)).sort();
+    return [...ordered, ...extras];
+  }, [tagCounts]);
 
   return (
     <aside className="rail">
@@ -312,22 +411,22 @@ export default function LibraryRail({
         <div className="rail-filters">
           <button
             type="button"
-            className={`rail-chip ${filter === "all" ? "active" : ""}`}
-            onClick={() => setFilter("all")}
+            className={`rail-chip ${activeTags.size === 0 ? "active" : ""}`}
+            onClick={() => setActiveTags(new Set())}
           >
             All
             <span className="chip-count">{activities.length}</span>
           </button>
-          {visibleTypes.map((t) => (
+          {visibleTags.map((t) => (
             <button
               key={t}
               type="button"
-              className={`rail-chip ${filter === t ? "active" : ""}`}
-              onClick={() => setFilter(filter === t ? "all" : t)}
+              className={`rail-chip ${activeTags.has(t) ? "active" : ""}`}
+              onClick={() => toggleTag(t)}
             >
-              <span className="chip-dot" style={{ background: WORKOUT_COLORS[t] }} />
-              {WORKOUT_LABELS[t]}
-              <span className="chip-count">{typeCounts[t]}</span>
+              <span className="chip-dot" style={{ background: tagColor(t) }} />
+              {tagLabel(t)}
+              <span className="chip-count">{tagCounts[t] ?? 0}</span>
             </button>
           ))}
         </div>

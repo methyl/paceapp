@@ -80,9 +80,22 @@ function App() {
   const isRunning = (a: ParsedActivity) =>
     !a.summary.sport || a.summary.sport === "running" || a.summary.sport === "trail_running";
 
+  // Merge server-derived tags into local activities. Match by fileName
+  // (the server's uniqueness key). Activities without a remote match
+  // just keep tags undefined and fall through the tag filter.
+  const activitiesWithTags = useMemo(() => {
+    const tagsByName = new Map<string, string[]>();
+    for (const r of sync.remote ?? []) if (r.tags?.length) tagsByName.set(r.fileName, r.tags);
+    if (tagsByName.size === 0) return activities;
+    return activities.map((a) => {
+      const t = tagsByName.get(a.fileName);
+      return t ? { ...a, tags: t } : a;
+    });
+  }, [activities, sync.remote]);
+
   const runningActivities = useMemo(
-    () => activities.filter((a) => isRunning(a) && a.summary.totalDistance >= 500),
-    [activities]
+    () => activitiesWithTags.filter((a) => isRunning(a) && a.summary.totalDistance >= 500),
+    [activitiesWithTags]
   );
 
   const timeFilteredRunning = useMemo(() => {
