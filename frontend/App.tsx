@@ -61,6 +61,7 @@ function App() {
   const [extensionMode, setExtensionMode] = useState(false);
   const snappedExtension = useSnappedRoute(extensionWaypoints);
   const [timeRange, setTimeRange] = useState<string>("all");
+  const [railOpen, setRailOpen] = useState(false);
 
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -262,6 +263,7 @@ function App() {
     setView("library");
     setExtensionMode(false);
     setExtensionWaypoints([]);
+    setRailOpen(false);
   };
 
   const handleExtend = useCallback((extended: ParsedActivity) => {
@@ -447,14 +449,7 @@ function App() {
           </div>
         </main>
       ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "300px 1fr",
-            height: "calc(100vh - 56px)",
-            background: "#fff",
-          }}
-        >
+        <div className={`app-shell ${railOpen ? "rail-open" : ""}`}>
           <LibraryRail
             activities={runningActivities}
             selectedId={selected?.id ?? null}
@@ -465,8 +460,29 @@ function App() {
             onTogglePinCompare={handleTogglePinCompare}
           />
 
-          <main style={{ overflow: "auto", background: "#fff", minWidth: 0 }}>
-            <div style={{ padding: "32px 32px 48px", maxWidth: 1180 }}>
+          <div
+            className="rail-backdrop"
+            onClick={() => setRailOpen(false)}
+            aria-hidden="true"
+          />
+
+          <button
+            type="button"
+            className="rail-toggle"
+            onClick={() => setRailOpen((v) => !v)}
+            aria-label={railOpen ? "Close runs library" : "Open runs library"}
+          >
+            <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
+              {railOpen ? (
+                <path d="M6 6l12 12M6 18L18 6" strokeLinecap="round" />
+              ) : (
+                <path d="M4 6h16M4 12h16M4 18h16" strokeLinecap="round" />
+              )}
+            </svg>
+          </button>
+
+          <main className="main-pane">
+            <div className="main-pane-inner">
               {loading && loadProgress.total > 0 && (
                 <div style={{ color: "var(--ink-3)", fontSize: 13, marginBottom: 16 }}>
                   Parsing FIT files… {loadProgress.done} / {loadProgress.total}
