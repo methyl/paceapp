@@ -185,8 +185,8 @@ function mergeInto(target: EffortSegment, source: EffortSegment) {
 
   target.totalDistance += source.totalDistance;
   target.totalElapsedTime = totalTime;
-  target.avgSpeed = wavg(target.avgSpeed, source.avgSpeed);
-  target.avgPace = speedToPace(target.avgSpeed ?? 0);
+  target.avgSpeed = totalTime > 0 ? target.totalDistance / totalTime : 0;
+  target.avgPace = speedToPace(target.avgSpeed);
   target.avgHeartRate = wavg(target.avgHeartRate, source.avgHeartRate);
   target.maxHeartRate =
     target.maxHeartRate != null && source.maxHeartRate != null
@@ -320,18 +320,22 @@ function summarizeRecords(
 
   const firstDist = records[0].distance ?? 0;
   const lastDist = records[records.length - 1].distance ?? 0;
-  const avgSpeed = avg(records.map((r) => r.speed));
+  const totalDistance = lastDist - firstDist;
+  // Derive speed from distance/time so pace = time/distance and the two
+  // columns stay consistent. Mean of instantaneous record speeds drifts
+  // from this and makes pace disagree with time on ~1 km chunks.
+  const avgSpeed = elapsed > 0 ? totalDistance / elapsed : 0;
 
   return {
     lapIndex,
     startTime: records[0].timestamp,
-    totalDistance: lastDist - firstDist,
+    totalDistance,
     totalElapsedTime: elapsed,
     avgHeartRate: avg(records.map((r) => r.heartRate)),
     maxHeartRate: max(records.map((r) => r.heartRate)),
     avgCadence: avg(records.map((r) => r.cadence)),
     avgSpeed,
-    avgPace: speedToPace(avgSpeed ?? 0),
+    avgPace: speedToPace(avgSpeed),
     avgVerticalOscillation: avg(records.map((r) => r.verticalOscillation)),
     avgGroundContactTime: avg(records.map((r) => r.groundContactTime)),
     avgGroundContactTimeBalance: avg(
