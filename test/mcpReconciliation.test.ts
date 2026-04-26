@@ -1,20 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
-import { parseFitFile, reprocessActivity } from "../frontend/parseFit";
+import { reprocessActivity } from "../frontend/parseFit";
 import { buildActivityView } from "../workers/src/mcp/activityView";
+import { parseFixture } from "./fixtures/loadAll";
 import type { LapSummary } from "../shared/types";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURES = join(__dirname, "fixtures");
-
-function loadFixture(pattern: string): ArrayBuffer {
-  const files = readdirSync(FIXTURES);
-  const name = files.find((f) => f.includes(pattern))!;
-  const buf = readFileSync(join(FIXTURES, name));
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-}
 
 /**
  * Round-trip an activity through JSON to model the upload pipeline:
@@ -60,7 +48,7 @@ describe("MCP ↔ UI reconciliation: same FIT yields the same numbers", () => {
   it.each(RECONCILIATION_FIXTURES)(
     "fixture %s: laps from MCP match laps shown in the UI",
     async (pattern) => {
-      const ui = await parseFitFile(loadFixture(pattern), pattern);
+      const ui = await parseFixture(pattern);
       const stored = asStored(ui);
       const mcp = buildActivityView(stored, META_FOR_TEST, ["laps"]);
 
@@ -75,7 +63,7 @@ describe("MCP ↔ UI reconciliation: same FIT yields the same numbers", () => {
   it.each(RECONCILIATION_FIXTURES)(
     "fixture %s: segments from MCP match segments shown in the UI",
     async (pattern) => {
-      const ui = await parseFitFile(loadFixture(pattern), pattern);
+      const ui = await parseFixture(pattern);
       const stored = asStored(ui);
       const mcp = buildActivityView(stored, META_FOR_TEST, ["segments"]);
 
@@ -90,7 +78,7 @@ describe("MCP ↔ UI reconciliation: same FIT yields the same numbers", () => {
   it.each(RECONCILIATION_FIXTURES)(
     "fixture %s: summary from MCP matches summary shown in the UI",
     async (pattern) => {
-      const ui = await parseFitFile(loadFixture(pattern), pattern);
+      const ui = await parseFixture(pattern);
       const stored = asStored(ui);
       const mcp = buildActivityView(stored, META_FOR_TEST, ["summary"]);
 
@@ -109,7 +97,7 @@ describe("MCP ↔ UI reconciliation: same FIT yields the same numbers", () => {
     // from totalDistance / totalElapsedTime). MCP must still return the
     // canonical numbers — i.e. it must re-derive on read instead of
     // trusting the stored payload.
-    const ui = await parseFitFile(loadFixture("2026-02-28"), "2026-02-28");
+    const ui = await parseFixture("2026-02-28");
     const stored = asStored(ui);
 
     // Corrupt the stored segments + lap pace the same way old code did.
@@ -138,7 +126,7 @@ describe("MCP ↔ UI reconciliation: same FIT yields the same numbers", () => {
 
   it("MCP splits match the UI's `computeKmSplits` output", async () => {
     const { computeKmSplits } = await import("../shared/splits");
-    const ui = await parseFitFile(loadFixture("2025-05-27"), "2025-05-27");
+    const ui = await parseFixture("2025-05-27");
     const stored = asStored(ui);
     const mcp = buildActivityView(stored, META_FOR_TEST, ["splits"]);
     const uiSplits = computeKmSplits(ui.records);
@@ -151,7 +139,7 @@ describe("MCP ↔ UI reconciliation: same FIT yields the same numbers", () => {
     // The UI hits `reprocessActivity` on every load. If MCP and UI use
     // the same shared code, running the cached activity through both
     // must converge — no off-by-one, no rounding drift.
-    const ui = await parseFitFile(loadFixture("2026-02-28"), "2026-02-28");
+    const ui = await parseFixture("2026-02-28");
     const reprocessed = reprocessActivity(ui);
     const stored = asStored(reprocessed);
     const mcp = buildActivityView(stored, META_FOR_TEST, ["laps", "segments"]);

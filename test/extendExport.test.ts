@@ -1,30 +1,20 @@
-import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { describe, it, expect, beforeAll } from "vitest";
 import { Decoder, Stream } from "@garmin/fitsdk";
 import { parseFitFile, reprocessActivity } from "../frontend/parseFit";
 import { exportActivityToFit } from "../frontend/exportFit";
 import { buildExtensionLaps, synthesizeRecords } from "../frontend/synthesizeExtension";
+import { parseFixture } from "./fixtures/loadAll";
 import type { ParsedActivity } from "../frontend/types";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURES = join(__dirname, "fixtures");
-
-function loadFixture(pattern: string): ArrayBuffer {
-  const files = readdirSync(FIXTURES);
-  const name = files.find((f) => f.includes(pattern))!;
-  const buf = readFileSync(join(FIXTURES, name));
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-}
-
-async function extendAndExport(pattern: string): Promise<{
+interface ExtendedRoundtrip {
   original: ParsedActivity;
   extended: ParsedActivity;
   reimported: ParsedActivity;
   rawMessages: Record<string, unknown[]>;
-}> {
-  const original = await parseFitFile(loadFixture(pattern), pattern);
+}
+
+async function extendAndExport(pattern: string): Promise<ExtendedRoundtrip> {
+  const original = await parseFixture(pattern);
   const lastRec = original.records[original.records.length - 1];
   const nextStart: [number, number] = [
     (lastRec.lat ?? 50) + 0.001,
@@ -77,14 +67,20 @@ async function extendAndExport(pattern: string): Promise<{
 }
 
 describe("Extended FIT export includes extension laps", () => {
-  it("writes more lap messages than the original had", async () => {
-    const { original, rawMessages } = await extendAndExport("2026-04-08");
+  let result: ExtendedRoundtrip;
+
+  beforeAll(async () => {
+    result = await extendAndExport("2026-04-08");
+  });
+
+  it("writes more lap messages than the original had", () => {
+    const { original, rawMessages } = result;
     const origCount = original.rawFitMessages?.lapMesgs?.length ?? 0;
     expect(rawMessages.lapMesgs.length).toBeGreaterThan(origCount);
   });
 
-  it("extension lap messages have required FIT fields", async () => {
-    const { original, rawMessages } = await extendAndExport("2026-04-08");
+  it("extension lap messages have required FIT fields", () => {
+    const { original, rawMessages } = result;
     const origCount = original.rawFitMessages?.lapMesgs?.length ?? 0;
     const extensionLaps = rawMessages.lapMesgs.slice(origCount) as Record<string, unknown>[];
     expect(extensionLaps.length).toBeGreaterThan(0);
@@ -98,13 +94,13 @@ describe("Extended FIT export includes extension laps", () => {
     }
   });
 
-  it("re-importing the exported FIT surfaces the extension laps", async () => {
-    const { original, reimported } = await extendAndExport("2026-04-08");
+  it("re-importing the exported FIT surfaces the extension laps", () => {
+    const { original, reimported } = result;
     expect(reimported.laps.length).toBeGreaterThan(original.laps.length);
   });
 
-  it("re-imported extension laps carry running dynamics when source did", async () => {
-    const { original, reimported } = await extendAndExport("2026-04-08");
+  it("re-imported extension laps carry running dynamics when source did", () => {
+    const { original, reimported } = result;
     const origLast = original.laps[original.laps.length - 1];
     // If the source had running dynamics, the extension should too.
     if (origLast.avgVerticalOscillation != null) {
@@ -115,14 +111,13 @@ describe("Extended FIT export includes extension laps", () => {
     }
   });
 
-  it("session numLaps matches the number of lap messages written", async () => {
-    const { rawMessages } = await extendAndExport("2026-04-08");
-    const session = rawMessages.sessionMesgs[0] as Record<string, unknown>;
-    expect(session.numLaps).toBe(rawMessages.lapMesgs.length);
+  it("session numLaps matches the number of lap messages written", () => {
+    const session = result.rawMessages.sessionMesgs[0] as Record<string, unknown>;
+    expect(session.numLaps).toBe(result.rawMessages.lapMesgs.length);
   });
 
-  it("in-app activity.laps includes the extension laps", async () => {
-    const { original, extended } = await extendAndExport("2026-04-08");
+  it("in-app activity.laps includes the extension laps", () => {
+    const { original, extended } = result;
     expect(extended.laps.length).toBeGreaterThan(original.laps.length);
     const addedLap = extended.laps[extended.laps.length - 1];
     expect(addedLap.totalDistance).toBeGreaterThan(0);
@@ -130,12 +125,11 @@ describe("Extended FIT export includes extension laps", () => {
     expect(addedLap.avgPace).toBeTypeOf("string");
   });
 
-  it("all record timestamps decode to real dates (no FIT epoch 1989)", async () => {
+  it("all record timestamps decode to real dates (no FIT epoch 1989)", () => {
     // A single bad timestamp causes strict parsers (Garmin Connect, Strava
     // importers) to truncate the activity at that record — the extension
     // becomes invisible. 0 encodes as 1989-12-31 (the FIT epoch).
-    const { rawMessages } = await extendAndExport("2026-04-08");
-    const records = rawMessages.recordMesgs as Record<string, unknown>[];
+    const records = result.rawMessages.recordMesgs as Record<string, unknown>[];
     expect(records.length).toBeGreaterThan(0);
     for (const r of records) {
       const ts = new Date(r.timestamp as string | Date).getTime();
@@ -143,8 +137,8 @@ describe("Extended FIT export includes extension laps", () => {
     }
   });
 
-  it("session and activity timestamps reflect the extended end time", async () => {
-    const { extended, rawMessages } = await extendAndExport("2026-04-08");
+  it("session and activity timestamps reflect the extended end time", () => {
+    const { extended, rawMessages } = result;
     const lastRec = extended.records[extended.records.length - 1];
     const lastRecMs = new Date(lastRec.timestamp).getTime();
     const session = rawMessages.sessionMesgs[0] as Record<string, unknown>;
@@ -156,8 +150,8 @@ describe("Extended FIT export includes extension laps", () => {
     expect(activity.totalTimerTime).toBe(lastRec.elapsed);
   });
 
-  it("trailing timer-stop event marks the extended end, not the original end", async () => {
-    const { extended, rawMessages } = await extendAndExport("2026-04-08");
+  it("trailing timer-stop event marks the extended end, not the original end", () => {
+    const { extended, rawMessages } = result;
     const events = (rawMessages.eventMesgs ?? []) as Record<string, unknown>[];
     const lastStop = [...events]
       .reverse()
@@ -173,14 +167,13 @@ describe("Extended FIT export includes extension laps", () => {
       .toBe(new Date(lastRec.timestamp).getTime());
   });
 
-  it("lap totalCycles is consistent with avgCadence × time", async () => {
+  it("lap totalCycles is consistent with avgCadence × time", () => {
     // Apple Health and Strava derive the cadence chart from
     // totalCycles / totalTimerTime × 60. If the extension lap inherits
     // totalCycles from a sibling lap (e.g., 1022 cycles copied into a
     // 30-minute lap) the chart shows a nonsense cadence (~65 spm instead
     // of ~165 spm) — the red flat line the user saw in Apple Health.
-    const { rawMessages } = await extendAndExport("2026-04-08");
-    const laps = rawMessages.lapMesgs as Record<string, unknown>[];
+    const laps = result.rawMessages.lapMesgs as Record<string, unknown>[];
     for (const lap of laps) {
       const cycles = (lap.totalCycles ?? 0) as number;
       const time = (lap.totalTimerTime ?? 0) as number;
@@ -192,14 +185,14 @@ describe("Extended FIT export includes extension laps", () => {
     }
   });
 
-  it("all original lap values round-trip without corruption", async () => {
+  it("all original lap values round-trip without corruption", () => {
     // The Garmin SDK encoder has a MesgDefinition-equality bug: messages
     // with the same field set but different key-iteration order share a
     // localMesgNum, so the second message's bytes decode against the
     // first's field order. Original lap 4 here has the same keys as lap 0
     // but in a different order — without key-order normalization, its
     // totalDistance decodes as ~10m and totalCycles as ~700M.
-    const { original, rawMessages } = await extendAndExport("2026-04-08");
+    const { original, rawMessages } = result;
     const rawOrig = original.rawFitMessages?.lapMesgs as Record<string, unknown>[];
     const origCount = rawOrig.length;
     const reLaps = rawMessages.lapMesgs as Record<string, unknown>[];
@@ -211,8 +204,8 @@ describe("Extended FIT export includes extension laps", () => {
     }
   });
 
-  it("session totalCycles is consistent with all records", async () => {
-    const { extended, rawMessages } = await extendAndExport("2026-04-08");
+  it("session totalCycles is consistent with all records", () => {
+    const { extended, rawMessages } = result;
     const session = rawMessages.sessionMesgs[0] as Record<string, unknown>;
     const cycles = session.totalCycles as number;
     const time = session.totalTimerTime as number;

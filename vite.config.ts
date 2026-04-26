@@ -16,4 +16,14 @@ export default defineConfig({
       },
     },
   },
+  // FIT-fixture parsing dominates the suite. Threads + isolate:false lets
+  // multiple test files in the same worker share the parseFixture cache in
+  // test/fixtures/loadAll.ts — fixtures are decoded once per worker, not
+  // once per file.
+  test: {
+    pool: 'threads',
+    isolate: false,
+    // loadAllFixtures decodes 138 FIT files on first call.
+    hookTimeout: 30_000,
+  },
 })

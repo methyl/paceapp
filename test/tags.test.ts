@@ -1,24 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
-import { parseFitFile } from "../frontend/parseFit";
 import { deriveTags } from "../workers/src/tags";
 import { fallbackZones } from "../workers/src/zones";
+import { parseFixture } from "./fixtures/loadAll";
 import type { ParsedActivity } from "../frontend/types";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURES = join(__dirname, "fixtures");
-
-function loadFixture(pattern: string): ArrayBuffer {
-  const files = readdirSync(FIXTURES);
-  const name = files.find((f) => f.includes(pattern))!;
-  const buf = readFileSync(join(FIXTURES, name));
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-}
-
 async function tagsFor(pattern: string, totalAscentOverride?: number) {
-  const parsed = await parseFitFile(loadFixture(pattern), "test");
+  const parsed = await parseFixture(pattern);
   return {
     tags: deriveTagsFromParsed(parsed, totalAscentOverride),
     parsed,
@@ -144,7 +131,7 @@ describe("tag derivation (server uses shared detectWorkoutType)", () => {
   // smoothed-altitude fix drops totalAscent well below the hilly
   // threshold; confirm the derived meta lines up.
   it("7km easy on flat terrain (2025-10-26) doesn't tag hilly", async () => {
-    const parsed = await parseFitFile(loadFixture("2025-10-26"), "test");
+    const parsed = await parseFixture("2025-10-26");
     // Simulate the server path: derive smoothed ascent from records,
     // pass through deriveTags.
     const { elevationFromRecords } = await import("../shared/elevation");
@@ -220,7 +207,7 @@ describe("tag derivation (server uses shared detectWorkoutType)", () => {
     const zones = { z1_max: 125, z2_max: 143, z3_max: 163, z4_max: 176 };
     // Use a real easy-run fixture; pass totalAscent high enough to
     // clear the hilly threshold but expect *no* hill-intervals.
-    const parsed = await parseFitFile(loadFixture("2025-09-19"), "test");
+    const parsed = await parseFixture("2025-09-19");
     const tags = deriveTags({
       zones,
       summary: parsed.summary,
