@@ -1,25 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
-import { parseFitFile } from "../frontend/parseFit";
+import { parseFixture } from "./fixtures/loadAll";
 import { groupCurrentSegments, findHistoricalPoints } from "../frontend/segmentHistory";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURES = join(__dirname, "fixtures");
-
-function loadFixture(pattern: string): ArrayBuffer {
-  const files = readdirSync(FIXTURES);
-  const name = files.find((f) => f.includes(pattern))!;
-  const buf = readFileSync(join(FIXTURES, name));
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-}
 
 describe("segment history: distance bucket isolation", () => {
   it("does not match ~200m strides to 1km reps at same pace", async () => {
     // Load a strides workout and a 1km intervals workout
-    const strides = await parseFitFile(loadFixture("2026-03-29"), "strides");
-    const intervals = await parseFitFile(loadFixture("2025-06-24"), "intervals");
+    const strides = await parseFixture("2026-03-29");
+    const intervals = await parseFixture("2025-06-24");
     const all = [strides, intervals];
 
     const groups = groupCurrentSegments(strides);
@@ -39,7 +27,7 @@ describe("segment history: distance bucket isolation", () => {
 
 describe("segment history: running dynamics", () => {
   it("groups include running dynamics averages", async () => {
-    const a = await parseFitFile(loadFixture("2026-04-08"), "test");
+    const a = await parseFixture("2026-04-08");
     const groups = groupCurrentSegments(a);
     expect(groups.length).toBeGreaterThan(0);
 
@@ -53,7 +41,7 @@ describe("segment history: running dynamics", () => {
   it("historical points include running dynamics", async () => {
     const files = ["2026-04-08", "2026-04-04", "2026-04-05"];
     const activities = await Promise.all(
-      files.map(async (f) => parseFitFile(loadFixture(f), f))
+      files.map(async (f) => parseFixture(f))
     );
 
     const groups = groupCurrentSegments(activities[0]);

@@ -1,25 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
-import { parseFitFile } from "../frontend/parseFit";
+import { parseFixture } from "./fixtures/loadAll";
 import { computeKmSplits } from "../shared/splits";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURES = join(__dirname, "fixtures");
-
-function loadFixture(pattern: string): ArrayBuffer {
-  const files = readdirSync(FIXTURES);
-  const name = files.find((f) => f.includes(pattern))!;
-  const buf = readFileSync(join(FIXTURES, name));
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-}
 
 describe("computeKmSplits", () => {
   it("produces ~1km splits regardless of lap structure: 2026-02-28 (manual laps)", async () => {
     // Manual-lap intervals workout — laps are non-uniform, but record stream
     // should still yield clean ~1km splits.
-    const a = await parseFitFile(loadFixture("2026-02-28"), "test");
+    const a = await parseFixture("2026-02-28");
     const splits = computeKmSplits(a.records);
     expect(splits.length).toBeGreaterThan(2);
     // Each non-tail split should be 900–1100m.
@@ -30,7 +18,7 @@ describe("computeKmSplits", () => {
   });
 
   it("preserves total distance across splits: 2026-04-05", async () => {
-    const a = await parseFitFile(loadFixture("2026-04-05"), "test");
+    const a = await parseFixture("2026-04-05");
     const splits = computeKmSplits(a.records);
     const splitTotal = splits.reduce((s, p) => s + p.totalDistance, 0);
     const lapTotal = a.laps.reduce((s, l) => s + l.totalDistance, 0);
@@ -43,7 +31,7 @@ describe("computeKmSplits", () => {
   });
 
   it("populates pace, HR, and dynamics per split: 2025-05-27", async () => {
-    const a = await parseFitFile(loadFixture("2025-05-27"), "test");
+    const a = await parseFixture("2025-05-27");
     const splits = computeKmSplits(a.records);
     expect(splits.length).toBeGreaterThan(0);
     for (const s of splits) {

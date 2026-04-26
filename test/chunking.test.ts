@@ -1,23 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
-import { parseFitFile } from "../frontend/parseFit";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURES = join(__dirname, "fixtures");
-
-function loadFixture(pattern: string): ArrayBuffer {
-  const files = readdirSync(FIXTURES);
-  const name = files.find((f) => f.includes(pattern))!;
-  const buf = readFileSync(join(FIXTURES, name));
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-}
+import { parseFixture } from "./fixtures/loadAll";
 
 describe("long segment chunking", () => {
   it("splits segments longer than 2km into ~1km chunks: 2026-04-05", async () => {
     // This workout has a 12.3km opening segment — useless for comparison
-    const a = await parseFitFile(loadFixture("2026-04-05"), "test");
+    const a = await parseFixture("2026-04-05");
     // No segment should be longer than 2km
     for (const seg of a.segments) {
       expect(
@@ -29,7 +16,7 @@ describe("long segment chunking", () => {
 
   it("splits segments longer than 2km into ~1km chunks: 2025-09-16", async () => {
     // Has an 8.2km segment and a 5.6km segment
-    const a = await parseFitFile(loadFixture("2025-09-16"), "test");
+    const a = await parseFixture("2025-09-16");
     for (const seg of a.segments) {
       expect(
         seg.totalDistance,
@@ -39,7 +26,7 @@ describe("long segment chunking", () => {
   });
 
   it("preserves short segments (intervals, recovery) as-is: 2026-02-28", async () => {
-    const a = await parseFitFile(loadFixture("2026-02-28"), "test");
+    const a = await parseFixture("2026-02-28");
     // Interval segments (~400m) should NOT be split further
     const shortSegs = a.segments.filter((s) => s.totalDistance < 500 && s.totalDistance > 200);
     expect(shortSegs.length).toBeGreaterThan(0);
@@ -50,7 +37,7 @@ describe("long segment chunking", () => {
   });
 
   it("total distance is preserved after chunking", async () => {
-    const a = await parseFitFile(loadFixture("2026-04-05"), "test");
+    const a = await parseFixture("2026-04-05");
     const segTotal = a.segments.reduce((s, seg) => s + seg.totalDistance, 0);
     const lapTotal = a.laps.reduce((s, lap) => s + lap.totalDistance, 0);
     // Should be within 1% of original
@@ -62,7 +49,7 @@ describe("long segment chunking", () => {
     // speeds, which drifts from distance/time and made the Pace column
     // disagree with the Time column on ~1km chunks (e.g. 4:17 / 4:09).
     for (const fx of ["2026-04-05", "2025-09-16", "2026-04-04"]) {
-      const a = await parseFitFile(loadFixture(fx), "test");
+      const a = await parseFixture(fx);
       for (const seg of a.segments) {
         if (seg.totalDistance < 100 || seg.totalElapsedTime < 10) continue;
         const expectedSpeed = seg.totalDistance / seg.totalElapsedTime;

@@ -1,80 +1,56 @@
-import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { describe, it, expect, beforeAll } from "vitest";
 import { Decoder, Stream } from "@garmin/fitsdk";
-import { parseFitFile } from "../frontend/parseFit";
 import { exportActivityToFit } from "../frontend/exportFit";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURES = join(__dirname, "fixtures");
-
-function loadFixture(pattern: string): ArrayBuffer {
-  const files = readdirSync(FIXTURES);
-  const name = files.find((f) => f.includes(pattern))!;
-  const buf = readFileSync(join(FIXTURES, name));
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-}
+import { parseFixture } from "./fixtures/loadAll";
+import type { ParsedActivity } from "../frontend/types";
 
 describe("FIT export", () => {
-  it("produces a valid FIT file from a parsed activity", async () => {
-    const activity = await parseFitFile(loadFixture("2026-04-08"), "test");
-    const exported = exportActivityToFit(activity);
+  let activity: ParsedActivity;
+  let exported: Uint8Array;
+  let messages: Record<string, unknown[]>;
 
-    // Verify it's a valid FIT file
+  beforeAll(async () => {
+    activity = await parseFixture("2026-04-08");
+    exported = exportActivityToFit(activity);
+    const stream = Stream.fromByteArray(Array.from(exported));
+    const decoder = new Decoder(stream);
+    expect(decoder.isFIT()).toBe(true);
+    expect(decoder.checkIntegrity()).toBe(true);
+    messages = decoder.read().messages;
+  });
+
+  it("produces a valid FIT file from a parsed activity", () => {
     const stream = Stream.fromByteArray(Array.from(exported));
     const decoder = new Decoder(stream);
     expect(decoder.isFIT()).toBe(true);
     expect(decoder.checkIntegrity()).toBe(true);
   });
 
-  it("preserves record count in round-trip", async () => {
-    const activity = await parseFitFile(loadFixture("2026-04-08"), "test");
-    const exported = exportActivityToFit(activity);
-
-    const stream = Stream.fromByteArray(Array.from(exported));
-    const decoder = new Decoder(stream);
-    const { messages } = decoder.read();
-
+  it("preserves record count in round-trip", () => {
     expect(messages.recordMesgs.length).toBe(activity.records.length);
   });
 
-  it("preserves lap count in round-trip", async () => {
-    const activity = await parseFitFile(loadFixture("2026-04-08"), "test");
-    const exported = exportActivityToFit(activity);
-
-    const stream = Stream.fromByteArray(Array.from(exported));
-    const decoder = new Decoder(stream);
-    const { messages } = decoder.read();
-
-    // Laps in original activity
+  it("preserves lap count in round-trip", () => {
     const originalLapCount = activity.rawFitMessages?.lapMesgs?.length ?? 0;
     expect(messages.lapMesgs.length).toBe(originalLapCount);
   });
 
-  it("preserves GPS data in round-trip", async () => {
-    const activity = await parseFitFile(loadFixture("2026-04-08"), "test");
-    const exported = exportActivityToFit(activity);
-
-    const stream = Stream.fromByteArray(Array.from(exported));
-    const decoder = new Decoder(stream);
-    const { messages } = decoder.read();
-
+  it("preserves GPS data in round-trip", () => {
     const withGps = messages.recordMesgs.filter(
-      (r: Record<string, unknown>) => r.positionLat != null
+      (r) => (r as Record<string, unknown>).positionLat != null
     );
     const origWithGps = activity.records.filter((r) => r.lat != null);
 
     expect(withGps.length).toBe(origWithGps.length);
   });
 
-  it("works for activity without rawFitMessages (minimal export)", async () => {
-    const activity = await parseFitFile(loadFixture("2026-04-08"), "test");
-    // Strip raw messages to force minimal path
-    activity.rawFitMessages = undefined;
-    const exported = exportActivityToFit(activity);
+  it("works for activity without rawFitMessages (minimal export)", () => {
+    // Independent export path — must not reuse the cached `exported` since
+    // we want to exercise the branch that has no raw messages to copy from.
+    const stripped: ParsedActivity = { ...activity, rawFitMessages: undefined };
+    const minimal = exportActivityToFit(stripped);
 
-    const stream = Stream.fromByteArray(Array.from(exported));
+    const stream = Stream.fromByteArray(Array.from(minimal));
     const decoder = new Decoder(stream);
     expect(decoder.isFIT()).toBe(true);
     expect(decoder.checkIntegrity()).toBe(true);

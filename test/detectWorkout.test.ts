@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
-import { parseFitFile } from "../frontend/parseFit";
 import { deriveTags } from "../workers/src/tags";
 import { fallbackZones } from "../workers/src/zones";
+import { parseFixture } from "./fixtures/loadAll";
 
 /**
  * This suite used to test the client-side `workoutType` enum returned
@@ -15,18 +12,8 @@ import { fallbackZones } from "../workers/src/zones";
  * upload time, that's the drift bug this suite catches.
  */
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURES = join(__dirname, "fixtures");
-
-function loadFixture(pattern: string): ArrayBuffer {
-  const files = readdirSync(FIXTURES);
-  const name = files.find((f) => f.includes(pattern))!;
-  const buf = readFileSync(join(FIXTURES, name));
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-}
-
 async function tagsFor(pattern: string): Promise<string[]> {
-  const parsed = await parseFitFile(loadFixture(pattern), "test");
+  const parsed = await parseFixture(pattern);
   return deriveTags({
     zones: fallbackZones(),
     summary: parsed.summary,
