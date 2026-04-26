@@ -98,6 +98,36 @@ a { color: inherit; }
 .app { min-height: 100vh; }
 .wrap { max-width: 1280px; margin: 0 auto; padding: 0 32px; }
 
+/* Main two-column layout: rail + content. Switches to single column under 900px. */
+.app-shell {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  height: calc(100vh - 56px);
+  background: #fff;
+}
+.main-pane { overflow: auto; background: #fff; min-width: 0; }
+.main-pane-inner { padding: 32px 32px 48px; max-width: 1180px; }
+
+/* Mobile rail toggle button — hidden on desktop. */
+.rail-toggle {
+  display: none;
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  z-index: 60;
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  border: 0;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--sh-3);
+  cursor: pointer;
+}
+.rail-backdrop { display: none; }
+
 /* ------------- Nav bar ------------- */
 .nav {
   position: sticky; top: 0; z-index: 50;
@@ -672,3 +702,178 @@ input:focus {
 
 /* Leaflet in dark-neutral container */
 .leaflet-container { background: var(--bg-sunk); }
+
+/* ===========================================================
+   Responsive
+   - Tablet ≤ 1024px: tighter padding, 3-col stats
+   - Mobile  ≤ 640px: single column shell, rail as drawer,
+                       2-col stats, compact lap table
+   =========================================================== */
+
+/* Tablet — narrow desktops & landscape phones */
+@media (max-width: 1024px) {
+  .wrap { padding: 0 20px; }
+
+  .app-shell {
+    grid-template-columns: 240px 1fr;
+  }
+
+  .main-pane-inner {
+    padding: 24px 20px 36px;
+  }
+
+  .nav-search { min-width: 140px; }
+  .brand { padding-right: 16px; margin-right: 16px; }
+  .nav-tab { padding: 0 12px; font-size: 12.5px; }
+
+  .stats-mast,
+  .stats-strip {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  /* Drop right border on the last cell of each 3-col row so internal
+     gridlines align with the outer container edge. */
+  .mast-cell:nth-child(3n),
+  .strip-cell:nth-child(3n) { border-right: 0; }
+  /* Add a top border for cells that wrap onto a second row */
+  .mast-cell:nth-child(n+4),
+  .strip-cell:nth-child(n+4) {
+    border-top: 1px solid var(--hair);
+  }
+
+  .mast-value { font-size: 28px; }
+
+  /* Hide low-priority lap columns to keep the row legible */
+  .lap-head,
+  .lap-row {
+    grid-template-columns:
+      32px            /* # */
+      52px            /* Dist */
+      58px            /* Time */
+      minmax(80px, 1fr) /* Pace */
+      66px            /* HR */
+      44px            /* Cad */
+      52px            /* GCT */
+      48px;           /* VR */
+    gap: 8px;
+  }
+  .lap-head > div:nth-child(7),  /* Osc */
+  .lap-row  > div:nth-child(7),
+  .lap-head > div:nth-child(9),  /* Stride */
+  .lap-row  > div:nth-child(9),
+  .lap-head > div:nth-child(11), /* Power */
+  .lap-row  > div:nth-child(11) {
+    display: none;
+  }
+}
+
+/* Mobile */
+@media (max-width: 640px) {
+  body { font-size: 13.5px; }
+
+  .wrap { padding: 0 14px; }
+
+  /* Single-column shell. Rail becomes an off-canvas drawer. */
+  .app-shell {
+    grid-template-columns: 1fr;
+    /* Allow the page to scroll naturally instead of nesting scroll regions */
+    height: auto;
+    min-height: calc(100vh - 56px);
+  }
+  .main-pane { overflow: visible; }
+  .main-pane-inner { padding: 16px 14px 32px; max-width: 100%; }
+
+  .rail-toggle { display: inline-flex; }
+
+  .app-shell .rail {
+    position: fixed;
+    top: 56px; left: 0; bottom: 0;
+    width: min(86vw, 340px);
+    z-index: 70;
+    transform: translateX(-100%);
+    transition: transform .22s ease;
+    box-shadow: var(--sh-3);
+    border-right: 1px solid var(--hair-strong);
+  }
+  .app-shell.rail-open .rail { transform: translateX(0); }
+
+  .rail-backdrop {
+    display: block;
+    position: fixed;
+    inset: 56px 0 0 0;
+    background: rgba(20, 20, 20, 0.32);
+    z-index: 65;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease;
+  }
+  .app-shell.rail-open .rail-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Nav: tighten spacing, hide search + Z2 input + time-range on mobile.
+     The rail and import button remain reachable. */
+  .nav-inner { padding: 0 12px; gap: 4px; }
+  .brand { padding-right: 10px; margin-right: 8px; }
+  .brand-wordmark { font-size: 18px; }
+  .brand-tag { display: none; }
+
+  .nav-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .nav-tabs::-webkit-scrollbar { display: none; }
+  .nav-tab { padding: 0 10px; font-size: 12px; white-space: nowrap; }
+  .nav-tab.active::after { left: 8px; right: 8px; }
+
+  .nav-search,
+  .nav-divider { display: none; }
+  .nav-right > .seg,
+  .nav-right > .row { display: none; }
+  .nav-new { padding: 0 10px; font-size: 11.5px; }
+  .nav-new svg { width: 11px; height: 11px; }
+
+  /* Page title: stack title and actions */
+  .page-title {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 16px 0 12px;
+  }
+  .page-title h1 { font-size: 24px; }
+
+  /* Stats: 2 columns on phones */
+  .stats-mast,
+  .stats-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .mast-cell:nth-child(2n),
+  .strip-cell:nth-child(2n) { border-right: 0; }
+  .mast-cell:nth-child(n+3),
+  .strip-cell:nth-child(n+3) {
+    border-top: 1px solid var(--hair);
+  }
+  .mast-cell { padding: 12px 14px 10px; }
+  .mast-value { font-size: 24px; }
+  .mast-label { margin-bottom: 4px; }
+
+  /* Compact lap table: drop rare columns and shrink the rest */
+  .lap-head,
+  .lap-row {
+    grid-template-columns:
+      28px            /* # */
+      48px            /* Dist */
+      52px            /* Time */
+      minmax(70px, 1fr) /* Pace */
+      54px;           /* HR */
+    gap: 6px;
+    padding-left: 8px;
+    padding-right: 8px;
+    font-size: 12px;
+  }
+  /* Hide everything past HR (Cad, Osc, GCT, Str, VR, Pow) */
+  .lap-head > div:nth-child(n+6),
+  .lap-row  > div:nth-child(n+6) {
+    display: none;
+  }
+
+  .card-pad { padding: 14px; }
+  .card-head { padding: 12px 14px; }
+}
