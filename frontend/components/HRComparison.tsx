@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import type { ParsedActivity, WorkoutType } from "../types";
 import { WORKOUT_LABELS, WORKOUT_COLORS } from "../types";
+import { paceSecToStr, secPerKmFromSpeed } from "../../shared/pace";
 
 interface HRComparisonProps {
   activities: ParsedActivity[];
@@ -30,15 +31,9 @@ function groupByType(activities: ParsedActivity[]) {
 
 /** Pace bucket key: round to nearest 10 sec/km */
 function paceBucket(speedMps: number): number {
-  if (!speedMps || speedMps <= 0) return 0;
-  const secPerKm = 1000 / speedMps;
+  const secPerKm = secPerKmFromSpeed(speedMps);
+  if (secPerKm <= 0) return 0;
   return Math.round(secPerKm / 10) * 10;
-}
-
-function paceLabel(secPerKm: number): string {
-  const min = Math.floor(secPerKm / 60);
-  const sec = Math.round(secPerKm % 60);
-  return `${min}:${sec.toString().padStart(2, "0")}`;
 }
 
 /** Generate date-based color gradient for a list of activities */
@@ -70,7 +65,7 @@ function HRvsPaceScatter({ activities, type }: { activities: ParsedActivity[]; t
       const avgSpeed = a.summary.avgSpeed;
       const avgHR = a.summary.avgHeartRate;
       if (!avgSpeed || !avgHR) continue;
-      const secPerKm = 1000 / avgSpeed;
+      const secPerKm = secPerKmFromSpeed(avgSpeed);
       points.push({
         pace: +secPerKm.toFixed(0),
         hr: Math.round(avgHR),
@@ -106,7 +101,7 @@ function HRvsPaceScatter({ activities, type }: { activities: ParsedActivity[]; t
             name="Pace"
             tick={{ fontSize: 11 }}
             domain={["auto", "auto"]}
-            tickFormatter={(v: number) => paceLabel(v)}
+            tickFormatter={(v: number) => paceSecToStr(v)}
             label={{ value: "Pace (min/km)", position: "insideBottom", offset: -10, fontSize: 11 }}
             reversed
           />
@@ -125,7 +120,7 @@ function HRvsPaceScatter({ activities, type }: { activities: ParsedActivity[]; t
               return (
                 <div className="bg-white border border-gray-200 rounded p-2 text-xs shadow">
                   <div className="font-semibold">{d.date}</div>
-                  <div>Pace: {paceLabel(d.pace)} /km</div>
+                  <div>Pace: {paceSecToStr(d.pace)} /km</div>
                   <div>HR: {d.hr} bpm</div>
                 </div>
               );
@@ -168,7 +163,7 @@ function HRTrendChart({ activities, type }: { activities: ParsedActivity[]; type
         day: "numeric",
       }),
       hr: Math.round(a.summary.avgHeartRate!),
-      pace: a.summary.avgSpeed ? +(1000 / a.summary.avgSpeed).toFixed(0) : null,
+      pace: a.summary.avgSpeed ? +(secPerKmFromSpeed(a.summary.avgSpeed)).toFixed(0) : null,
     }));
   }, [activities]);
 
@@ -199,7 +194,7 @@ function HRTrendChart({ activities, type }: { activities: ParsedActivity[]; type
                 <div className="bg-white border border-gray-200 rounded p-2 text-xs shadow">
                   <div className="font-semibold">{d.date}</div>
                   <div>HR: {d.hr} bpm</div>
-                  {d.pace && <div>Pace: {paceLabel(d.pace)} /km</div>}
+                  {d.pace && <div>Pace: {paceSecToStr(d.pace)} /km</div>}
                 </div>
               );
             }}
@@ -235,7 +230,7 @@ function HRByPaceBucket({ activities }: { activities: ParsedActivity[] }) {
       .filter(([, v]) => v.hrs.length >= 2)
       .map(([pace, v]) => ({
         pace: +pace,
-        paceLabel: paceLabel(+pace),
+        paceLabel: paceSecToStr(+pace),
         avgHR: Math.round(v.hrs.reduce((s, h) => s + h, 0) / v.hrs.length),
         minHR: Math.round(Math.min(...v.hrs)),
         maxHR: Math.round(Math.max(...v.hrs)),
@@ -262,7 +257,7 @@ function HRByPaceBucket({ activities }: { activities: ParsedActivity[] }) {
             type="number"
             tick={{ fontSize: 11 }}
             domain={["auto", "auto"]}
-            tickFormatter={(v: number) => paceLabel(v)}
+            tickFormatter={(v: number) => paceSecToStr(v)}
             label={{ value: "Pace (min/km)", position: "insideBottom", offset: -10, fontSize: 11 }}
             reversed
           />

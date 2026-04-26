@@ -15,6 +15,7 @@ import type { ParsedActivity } from "../types";
 import { WORKOUT_LABELS, WORKOUT_COLORS } from "../types";
 import { computePriorLoad } from "../fitness";
 import type { LoadCategory } from "../fitness";
+import { paceSecToStr, secPerKmFromSpeed } from "../../shared/pace";
 
 interface PaceComparisonProps {
   activities: ParsedActivity[];
@@ -41,12 +42,6 @@ interface MatchedSegment {
   priorDistance: number; // km done before this lap
   priorAvgSpeed: number; // avg speed of prior laps (m/s)
   priorAvgHR: number;
-}
-
-function paceToStr(secPerKm: number): string {
-  const min = Math.floor(secPerKm / 60);
-  const sec = Math.round(secPerKm % 60);
-  return `${min}:${sec.toString().padStart(2, "0")}`;
 }
 
 function getPriorLoadForSegment(laps: ParsedActivity["segments"], upToIndex: number): {
@@ -81,7 +76,7 @@ function findMatchingSegments(
       if (!lap.avgSpeed || lap.avgSpeed <= 0 || lap.avgHeartRate == null) continue;
       if (lap.totalDistance < 200) continue; // skip tiny segments
 
-      const secPerKm = 1000 / lap.avgSpeed;
+      const secPerKm = secPerKmFromSpeed(lap.avgSpeed);
       if (secPerKm < minPace || secPerKm > maxPace) continue;
 
       const prior = getPriorLoadForSegment(a.segments, i);
@@ -112,7 +107,7 @@ function findMatchingSegments(
         relativePosition: relPos,
         positionLabel,
         pace: Math.round(secPerKm),
-        paceLabel: paceToStr(secPerKm),
+        paceLabel: paceSecToStr(secPerKm),
         hr: Math.round(lap.avgHeartRate),
         priorLoad: prior.work,
         priorLoadLabel: prior.load === "fresh"
@@ -142,7 +137,7 @@ function suggestPaces(activities: ParsedActivity[]): number[] {
   for (const a of activities) {
     for (const lap of a.segments) {
       if (lap.avgSpeed && lap.avgSpeed > 0 && lap.totalDistance > 200) {
-        paces.push(Math.round(1000 / lap.avgSpeed));
+        paces.push(Math.round(secPerKmFromSpeed(lap.avgSpeed)));
       }
     }
   }
@@ -215,7 +210,7 @@ export default function PaceComparison({ activities }: PaceComparisonProps) {
               Target Pace
             </label>
             <div className="text-3xl font-bold text-gray-900">
-              {paceToStr(targetPace)}
+              {paceSecToStr(targetPace)}
               <span className="text-sm font-normal text-gray-500 ml-1">/km</span>
             </div>
             <input
@@ -247,7 +242,7 @@ export default function PaceComparison({ activities }: PaceComparisonProps) {
           <div className="text-sm text-gray-500">
             {segments.length} matching segment{segments.length !== 1 ? "s" : ""}
             <span className="text-xs ml-1">
-              ({paceToStr(targetPace - tolerance)} – {paceToStr(targetPace + tolerance)} /km)
+              ({paceSecToStr(targetPace - tolerance)} – {paceSecToStr(targetPace + tolerance)} /km)
             </span>
           </div>
         </div>
@@ -266,7 +261,7 @@ export default function PaceComparison({ activities }: PaceComparisonProps) {
                     : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                 }`}
               >
-                {paceToStr(p)}
+                {paceSecToStr(p)}
               </button>
             ))}
         </div>
@@ -284,7 +279,7 @@ export default function PaceComparison({ activities }: PaceComparisonProps) {
           {hrByLoad.length > 1 && (
             <div className="bg-white rounded-lg border border-gray-200 p-4">
               <h3 className="text-sm font-semibold text-gray-700 mb-1">
-                Avg HR by Prior Workload at ~{paceToStr(targetPace)}/km
+                Avg HR by Prior Workload at ~{paceSecToStr(targetPace)}/km
               </h3>
               <p className="text-xs text-gray-500 mb-3">
                 Shows how much harder the same pace feels after prior effort.
@@ -334,7 +329,7 @@ export default function PaceComparison({ activities }: PaceComparisonProps) {
           {/* Scatter: HR vs prior distance, colored by workout type */}
           <div className="bg-white rounded-lg border border-gray-200 p-4">
             <h3 className="text-sm font-semibold text-gray-700 mb-1">
-              HR vs Prior Distance at ~{paceToStr(targetPace)}/km
+              HR vs Prior Distance at ~{paceSecToStr(targetPace)}/km
             </h3>
             <p className="text-xs text-gray-500 mb-3">
               Each dot is one segment. X = how far into the workout. Y = heart rate.

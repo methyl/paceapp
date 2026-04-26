@@ -1,4 +1,5 @@
 import type { RecordPoint } from "./types";
+import { speedFromDistanceTime, speedToPace } from "./pace";
 
 export interface HillSprint {
   startIndex: number;
@@ -131,12 +132,8 @@ function buildSprint(
     grades.slice(startIdx, endIdx + 1).reduce((s, g) => s + g, 0) /
     (endIdx - startIdx + 1);
 
-  const avgSpeed = distance / duration;
-
-  const paceSecKm = avgSpeed > 0 ? 1000 / avgSpeed : 0;
-  const avgPace = `${Math.floor(paceSecKm / 60)}:${Math.round(paceSecKm % 60)
-    .toString()
-    .padStart(2, "0")}`;
+  const avgSpeed = speedFromDistanceTime(distance, duration);
+  const avgPace = speedToPace(avgSpeed);
 
   const hrs = segRecords
     .map((r) => r.heartRate)

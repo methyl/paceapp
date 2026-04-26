@@ -3,6 +3,8 @@
 // modules (localStorage etc.). Keep in sync manually — we can factor into
 // a shared package if this grows.
 
+import { secPerKmFromSpeed } from "../../../shared/pace";
+
 interface Seg {
   avgSpeed?: number | null;
   avgHeartRate?: number | null;
@@ -110,7 +112,7 @@ export function findMatches(
       if (!seg.avgSpeed || seg.avgSpeed <= 0 || !seg.avgHeartRate) continue;
       if (seg.totalDistance < 50) continue;
 
-      const segPace = 1000 / seg.avgSpeed;
+      const segPace = secPerKmFromSpeed(seg.avgSpeed);
       if (Math.abs(segPace - targetPace) > tolerance) continue;
 
       const load = priorLoad(segs, i, z2);

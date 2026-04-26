@@ -1,4 +1,5 @@
 import type { RecordPoint, LapSummary } from "./types";
+import { speedFromDistanceTime, speedToPace } from "./pace";
 
 /**
  * Slice a record stream into uniform distance chunks (default 1km) and
@@ -75,7 +76,7 @@ function summarizeChunk(
     return m;
   };
 
-  const avgSpeed = totalDistance / totalElapsedTime;
+  const avgSpeed = speedFromDistanceTime(totalDistance, totalElapsedTime);
 
   return {
     lapIndex,
@@ -94,12 +95,4 @@ function summarizeChunk(
     avgVerticalRatio: avg(records.map((r) => r.verticalRatio)),
     avgPower: avg(records.map((r) => r.power)),
   };
-}
-
-function speedToPace(speedMps: number): string {
-  if (!speedMps || speedMps <= 0) return "-";
-  const secPerKm = 1000 / speedMps;
-  const min = Math.floor(secPerKm / 60);
-  const sec = Math.round(secPerKm % 60);
-  return `${min}:${sec.toString().padStart(2, "0")}`;
 }

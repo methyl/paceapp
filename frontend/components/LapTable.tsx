@@ -1,9 +1,8 @@
 import { useMemo } from "react";
 import type { LapSummary, WorkoutType } from "../types";
-import { formatTime } from "../parseFit";
+import { formatTime, parsePaceToSec } from "../../shared/pace";
 import {
   classifyLaps,
-  parsePaceToSec,
   type LapFilter,
   type LapKind,
 } from "../lapUtils";

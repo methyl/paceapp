@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import type { ParsedActivity } from "../types";
 import { buildExtensionLaps, haversineDistance, synthesizeRecords } from "../synthesizeExtension";
-import { speedToPace, formatTime } from "../parseFit";
+import { formatTime, paceFromDistanceTime, speedFromDistanceTime } from "../../shared/pace";
 import type { SnappedRoute } from "../routing";
 
 interface RunExtensionProps {
@@ -105,7 +105,7 @@ export default function RunExtension({
   const finishTime = parseTimeInput(timeInput);
   const extensionTime = finishTime != null ? finishTime - currentElapsed : null;
   const impliedPace = extensionTime && extensionDist > 0
-    ? speedToPace(extensionDist / extensionTime)
+    ? paceFromDistanceTime(extensionDist, extensionTime)
     : null;
 
   const startMs = getActivityStartMs(activity);
@@ -197,8 +197,8 @@ export default function RunExtension({
         ...activity.summary,
         totalDistance: lastMerged.distance,
         totalElapsedTime: lastMerged.elapsed,
-        avgSpeed: lastMerged.distance / lastMerged.elapsed,
-        avgPace: speedToPace(lastMerged.distance / lastMerged.elapsed),
+        avgSpeed: speedFromDistanceTime(lastMerged.distance, lastMerged.elapsed),
+        avgPace: paceFromDistanceTime(lastMerged.distance, lastMerged.elapsed),
       },
     };
 
@@ -278,8 +278,8 @@ export default function RunExtension({
           ...activity.summary,
           totalDistance: lastMerged.distance,
           totalElapsedTime: lastMerged.elapsed,
-          avgSpeed: lastMerged.distance / lastMerged.elapsed,
-          avgPace: speedToPace(lastMerged.distance / lastMerged.elapsed),
+          avgSpeed: speedFromDistanceTime(lastMerged.distance, lastMerged.elapsed),
+          avgPace: paceFromDistanceTime(lastMerged.distance, lastMerged.elapsed),
         },
       };
       onExtend(reExtended);

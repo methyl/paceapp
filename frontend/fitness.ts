@@ -1,6 +1,7 @@
 import type { ParsedActivity, LapSummary, WorkoutType } from "./types";
 import { getZ2Ceiling } from "./detectWorkout";
 import { getDistanceBucket, type DistanceBucket } from "./labeller";
+import { paceSecToStr } from "../shared/pace";
 
 /**
  * Efficiency Factor = (speed m/s) / (heart rate bpm) × 1000
@@ -212,9 +213,6 @@ function paceBand(secPerKm: number): string {
   return `${fmt(rounded)}-${fmt(rounded + 60)}`;
 }
 
-function paceStr(secPerKm: number): string {
-  return `${Math.floor(secPerKm / 60)}:${(Math.round(secPerKm) % 60).toString().padStart(2, "0")}`;
-}
 
 const LOAD_LABELS: Record<LoadCategory, string> = {
   fresh: "fresh",
@@ -320,7 +318,7 @@ export function computeContextFitness(
 
     // Label
     const distStr = ctx.distBucket ?? "mixed";
-    const avgPace = paceStr(
+    const avgPace = paceSecToStr(
       ctx.segments.reduce((s, seg) => s + seg.pace, 0) / ctx.segments.length
     );
     const label = `${distStr} @${avgPace} ${LOAD_LABELS[ctx.load]}`;

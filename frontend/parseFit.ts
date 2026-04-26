@@ -3,21 +3,9 @@ import { Decoder, Stream } from "@garmin/fitsdk";
 import { detectWorkoutType } from "./detectWorkout";
 import { getEffortSegments } from "./segmenter";
 import { generateWorkoutLabel } from "./labeller";
+import { speedToPace, speedFromDistanceTime } from "../shared/pace";
+import { normalizeSummaryPace } from "../shared/lapStats";
 import type { ParsedActivity, LapSummary, RecordPoint, ActivitySummary } from "./types";
-
-function speedToPace(speedMps: number): string {
-  if (!speedMps || speedMps <= 0) return "-";
-  const secPerKm = 1000 / speedMps;
-  const min = Math.floor(secPerKm / 60);
-  const sec = Math.round(secPerKm % 60);
-  return `${min}:${sec.toString().padStart(2, "0")}`;
-}
-
-function formatTime(seconds: number): string {
-  const min = Math.floor(seconds / 60);
-  const sec = Math.round(seconds % 60);
-  return `${min}:${sec.toString().padStart(2, "0")}`;
-}
 
 function avgOf(vals: (number | undefined)[]): number | undefined {
   const valid = vals.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
@@ -89,7 +77,7 @@ export async function parseFitFile(
     // Always compute speed from distance/time — matches what Garmin displays.
     // FIT avg_speed is often systematically faster than distance/time and
     // can be wildly wrong when pauses are involved.
-    const computedSpeed = lapTime > 0 ? lapDist / lapTime : 0;
+    const computedSpeed = speedFromDistanceTime(lapDist, lapTime);
     const avgSpeed = computedSpeed || (lap.avg_speed ?? lap.enhanced_avg_speed ?? 0);
 
     const lapSummary: LapSummary = {
@@ -173,22 +161,25 @@ export async function parseFitFile(
 
   const session = data.activity?.sessions?.[0];
 
-  const avgSpeed = session?.avg_speed ?? session?.enhanced_avg_speed ?? 0;
-  const summary: ActivitySummary = {
+  const totalDistance = session?.total_distance ?? 0;
+  const totalElapsedTime = session?.total_timer_time ?? session?.total_elapsed_time ?? 0;
+  // Always derive summary speed from distance/time — same canonical formula
+  // as laps and segments — so MCP and UI never disagree on the headline pace.
+  const summary: ActivitySummary = normalizeSummaryPace({
     sport: session?.sport,
     startTime: startTime,
-    totalDistance: session?.total_distance ?? 0,
-    totalElapsedTime: session?.total_timer_time ?? session?.total_elapsed_time ?? 0,
+    totalDistance,
+    totalElapsedTime,
     avgHeartRate: session?.avg_heart_rate,
     avgCadence: session?.avg_cadence != null ? session.avg_cadence * 2 : undefined,
-    avgSpeed,
-    avgPace: speedToPace(avgSpeed),
+    avgSpeed: 0,
+    avgPace: "-",
     avgVerticalOscillation: session?.avg_vertical_oscillation,
     avgGroundContactTime: session?.avg_stance_time,
     avgStrideLength: session?.avg_step_length,
     avgVerticalRatio: session?.avg_vertical_ratio,
     avgPower: session?.avg_power,
-  };
+  });
 
   const effortSegments = getEffortSegments(laps, records);
   const segmentsDetected = effortSegments.length > 0 && effortSegments[0].detected;
@@ -253,4 +244,3 @@ export function reprocessActivity(a: ParsedActivity): ParsedActivity {
   };
 }
 
-export { speedToPace, formatTime };

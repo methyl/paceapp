@@ -1,5 +1,5 @@
 import type { LapSummary, RecordPoint } from "./types";
-import { speedToPace } from "./parseFit";
+import { speedToPace, speedFromDistanceTime } from "../shared/pace";
 
 const R = 6371000; // Earth radius in meters
 
@@ -150,7 +150,7 @@ function summarizeChunk(chunk: RecordPoint[], lapIndex: number): LapSummary | nu
     return v.length > 0 ? Math.max(...v) : undefined;
   };
 
-  const avgSpeed = dist / time;
+  const avgSpeed = speedFromDistanceTime(dist, time);
   return {
     lapIndex,
     startTime: first.timestamp,
@@ -195,7 +195,7 @@ export function mergeWithPartialLap(
     return Math.max(a, b);
   };
 
-  const avgSpeed = totalDist / totalTime;
+  const avgSpeed = speedFromDistanceTime(totalDist, totalTime);
   return {
     lapIndex: partial.lapIndex,
     startTime: partial.startTime,

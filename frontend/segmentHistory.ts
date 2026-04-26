@@ -2,6 +2,7 @@ import type { ParsedActivity, LapSummary } from "./types";
 import { efficiencyFactor, computePriorLoad } from "./fitness";
 import type { LoadCategory } from "./fitness";
 import { getDistanceBucket, type DistanceBucket } from "./labeller";
+import { speedToPace } from "../shared/pace";
 
 const ADJACENT_LOADS: Record<LoadCategory, LoadCategory[]> = {
   fresh: ["fresh", "light"],
@@ -42,12 +43,6 @@ export interface WorkoutPoint {
   avgPower?: number;
 }
 
-function paceStr(speedMps: number): string {
-  if (!speedMps || speedMps <= 0) return "-";
-  const s = 1000 / speedMps;
-  return `${Math.floor(s / 60)}:${Math.round(s % 60).toString().padStart(2, "0")}`;
-}
-
 function avgOf(vals: (number | undefined)[]): number | undefined {
   const valid = vals.filter((v): v is number => v != null);
   return valid.length > 0 ? valid.reduce((s, v) => s + v, 0) / valid.length : undefined;
@@ -80,7 +75,7 @@ export function groupCurrentSegments(activity: ParsedActivity): SegmentGroup[] {
     } else {
       groups.push({
         avgSpeed: seg.avgSpeed,
-        avgPace: paceStr(seg.avgSpeed),
+        avgPace: speedToPace(seg.avgSpeed),
         load,
         distBucket,
         segments: [{ seg, index: i }],
@@ -103,7 +98,7 @@ function updateGroupAverages(group: SegmentGroup) {
   const segs = group.segments.map((s) => s.seg);
   const n = segs.length;
   group.avgSpeed = segs.reduce((s, v) => s + (v.avgSpeed ?? 0), 0) / n;
-  group.avgPace = paceStr(group.avgSpeed);
+  group.avgPace = speedToPace(group.avgSpeed);
   group.avgEF = segs.reduce((s, v) => s + efficiencyFactor(v.avgSpeed!, v.avgHeartRate!), 0) / n;
   group.avgHR = segs.reduce((s, v) => s + (v.avgHeartRate ?? 0), 0) / n;
   group.avgVerticalOscillation = avgOf(segs.map((s) => s.avgVerticalOscillation));
@@ -189,7 +184,7 @@ export function findHistoricalPoints(
       dateStr: e.dateStr,
       avgEF: +((avg(e.efs) ?? 0).toFixed(2)),
       avgHR: Math.round(avg(e.hrs) ?? 0),
-      avgPace: paceStr(group.avgSpeed),
+      avgPace: speedToPace(group.avgSpeed),
       count: e.efs.length,
       isCurrent: id === currentId,
       avgVerticalOscillation: avg(e.vos),
