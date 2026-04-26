@@ -3,20 +3,9 @@ import type { LapSummary, WorkoutType } from "./types";
 export type LapKind = "working" | "rest";
 export type LapFilter = "all" | "working";
 
-export function parsePaceToSec(pace: string | number | undefined | null): number | null {
-  if (pace == null) return null;
-  if (typeof pace === "number") return pace;
-  const m = pace.match(/^(\d+):(\d+)$/);
-  if (!m) return null;
-  return Number(m[1]) * 60 + Number(m[2]);
-}
-
-export function paceSecToStr(sec: number): string {
-  if (!isFinite(sec) || sec <= 0) return "—";
-  const m = Math.floor(sec / 60);
-  const s = Math.round(sec % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
+// Re-exported from shared/pace for backwards compat. New code should
+// import these directly from "./pace".
+export { parsePaceToSec, paceSecToStr } from "./pace";
 
 /**
  * Mark each lap "working" if its speed exceeds median × multiplier.

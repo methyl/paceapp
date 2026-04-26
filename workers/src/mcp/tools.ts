@@ -1,9 +1,15 @@
 import type { Env } from "../env";
 import type { User } from "../auth";
-import type { RecordPoint } from "../../../shared/types";
+import type { RecordPoint, LapSummary } from "../../../shared/types";
 import { findMatches, type Reference, type LoadCategory } from "./matching";
 import { parseMeta, deriveMeta, META_VERSION } from "../meta";
-import { computeKmSplits } from "../../../shared/splits";
+import { normalizeLapsPace } from "../../../shared/lapStats";
+import { getEffortSegments } from "../../../shared/segmenter";
+import {
+  buildActivityView,
+  type ActivityPart,
+  DEFAULT_PARTS,
+} from "./activityView";
 
 export const TOOL_DEFINITIONS = [
   {
@@ -178,7 +184,7 @@ async function getActivity(
   const id = String(args.id ?? "");
   if (!id) throw new Error("id required");
   const partsIn = Array.isArray(args.parts) ? (args.parts as string[]) : null;
-  const parts = new Set(partsIn ?? ["summary", "laps", "segments", "splits"]);
+  const parts = (partsIn as ActivityPart[] | null) ?? DEFAULT_PARTS;
 
   const row = await env.DB.prepare(
     `SELECT json_r2_key, file_name, workout_type, meta
@@ -204,31 +210,25 @@ async function getActivity(
       .run();
   }
 
-  const out: Record<string, unknown> = {
-    id,
-    file_name: row.file_name,
-    workout_type: row.workout_type ?? full.workoutType ?? null,
-    workout_label: m.workoutLabel ?? full.workoutLabel ?? null,
-    total_ascent_m: m.totalAscent ?? null,
-    total_descent_m: m.totalDescent ?? null,
-  };
-  if (parts.has("summary")) out.summary = full.summary;
-  if (parts.has("laps")) out.laps = full.laps;
-  if (parts.has("segments")) out.segments = full.segments;
-  if (parts.has("splits")) {
-    const records = Array.isArray(full.records) ? (full.records as RecordPoint[]) : [];
-    out.splits = computeKmSplits(records);
-  }
-  if (parts.has("records")) out.records = full.records;
-
   const tagRows = await env.DB.prepare(
     "SELECT tag FROM activity_tags WHERE activity_id = ?1",
   )
     .bind(id)
     .all<{ tag: string }>();
-  out.tags = (tagRows.results ?? []).map((t) => t.tag);
 
-  return out;
+  return buildActivityView(
+    full,
+    {
+      id,
+      file_name: row.file_name,
+      workout_type: row.workout_type ?? (full.workoutType as string | null) ?? null,
+      workout_label: m.workoutLabel ?? (full.workoutLabel as string | null) ?? null,
+      total_ascent_m: m.totalAscent ?? null,
+      total_descent_m: m.totalDescent ?? null,
+      tags: (tagRows.results ?? []).map((t) => t.tag),
+    },
+    parts,
+  );
 }
 
 async function tagCounts(
@@ -299,14 +299,23 @@ async function similarIntervals(
       try {
         const obj = await env.FIT_BUCKET.get(m.json_r2_key);
         if (!obj) return null;
-        const parsed = (await obj.json()) as { segments?: unknown };
-        const segments = Array.isArray(parsed.segments)
-          ? (parsed.segments as Array<Record<string, unknown>>).map((s) => ({
-              avgSpeed: num(s.avgSpeed),
-              avgHeartRate: num(s.avgHeartRate),
-              totalDistance: num(s.totalDistance) ?? 0,
-            }))
-          : [];
+        const parsed = (await obj.json()) as {
+          laps?: unknown; segments?: unknown; records?: unknown;
+        };
+        const records = Array.isArray(parsed.records) ? (parsed.records as RecordPoint[]) : [];
+        const storedLaps = Array.isArray(parsed.laps) ? (parsed.laps as LapSummary[]) : [];
+        // Re-derive segments via shared code so MCP and the UI agree.
+        // Falls back to stored segments only when records are missing.
+        const fresh = storedLaps.length > 0 && records.length > 0
+          ? getEffortSegments(normalizeLapsPace(storedLaps), records)
+          : Array.isArray(parsed.segments)
+            ? (parsed.segments as LapSummary[])
+            : [];
+        const segments = fresh.map((s) => ({
+          avgSpeed: num(s.avgSpeed),
+          avgHeartRate: num(s.avgHeartRate),
+          totalDistance: num(s.totalDistance) ?? 0,
+        }));
         return {
           id: m.id,
           fileName: m.file_name,

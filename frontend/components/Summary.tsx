@@ -1,6 +1,5 @@
 import type { ActivitySummary } from "../types";
-import { formatTime } from "../parseFit";
-import { parsePaceToSec } from "../lapUtils";
+import { formatTime, parsePaceToSec } from "../../shared/pace";
 
 interface SummaryProps {
   summary: ActivitySummary;

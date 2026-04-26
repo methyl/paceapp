@@ -1,5 +1,6 @@
 import type { LapSummary, RecordPoint } from "./types";
 import { classifyBySpeed } from "./lapUtils";
+import { speedToPace } from "./pace";
 
 /**
  * Standard interval distance buckets.
@@ -29,12 +30,6 @@ export function getBucketCanonical(bucket: DistanceBucket): number | null {
   if (!bucket) return null;
   const b = DISTANCE_BUCKETS.find((d) => d.name === bucket);
   return b ? b.canonical : null;
-}
-
-function paceStr(speedMps: number): string {
-  if (!speedMps || speedMps <= 0) return "";
-  const s = 1000 / speedMps;
-  return `${Math.floor(s / 60)}:${Math.round(s % 60).toString().padStart(2, "0")}`;
 }
 
 /** Format a duration into a compact label: "30s", "1min", "90s", "2min", "5min" */
@@ -166,7 +161,7 @@ export function generateWorkoutLabel(
       .filter((s) => s.avgSpeed && s.avgSpeed > 0 && s.totalDistance > 100)
       .map((s) => s.avgSpeed!);
     if (speeds.length > 0) {
-      const avgPace = paceStr(speeds.reduce((a, b) => a + b, 0) / speeds.length);
+      const avgPace = speedToPace(speeds.reduce((a, b) => a + b, 0) / speeds.length);
       return `${distLabel(totalDistance)} ${workoutType} @${avgPace}`;
     }
     return `${distLabel(totalDistance)} ${workoutType}`;
@@ -201,7 +196,7 @@ export function generateWorkoutLabel(
   }
 
   const avgRepSpeed = rep.fastSegs.reduce((s, r) => s + r.avgSpeed!, 0) / rep.fastSegs.length;
-  const avgRepPace = paceStr(avgRepSpeed);
+  const avgRepPace = speedToPace(avgRepSpeed);
 
   // Warmup/cooldown adopt the same word as the overall workoutType so
   // the label reads coherently with the pill. A user whose zones
