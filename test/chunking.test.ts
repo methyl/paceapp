@@ -56,4 +56,21 @@ describe("long segment chunking", () => {
     // Should be within 1% of original
     expect(Math.abs(segTotal - lapTotal) / lapTotal).toBeLessThan(0.01);
   });
+
+  it("segment pace agrees with totalDistance/totalElapsedTime", async () => {
+    // Regression: avgSpeed used to be the mean of instantaneous record
+    // speeds, which drifts from distance/time and made the Pace column
+    // disagree with the Time column on ~1km chunks (e.g. 4:17 / 4:09).
+    for (const fx of ["2026-04-05", "2025-09-16", "2026-04-04"]) {
+      const a = await parseFitFile(loadFixture(fx), "test");
+      for (const seg of a.segments) {
+        if (seg.totalDistance < 100 || seg.totalElapsedTime < 10) continue;
+        const expectedSpeed = seg.totalDistance / seg.totalElapsedTime;
+        expect(
+          seg.avgSpeed,
+          `${fx} seg ${seg.lapIndex}: avgSpeed should be distance/time`
+        ).toBeCloseTo(expectedSpeed, 4);
+      }
+    }
+  });
 });
