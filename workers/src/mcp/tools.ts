@@ -1,7 +1,9 @@
 import type { Env } from "../env";
 import type { User } from "../auth";
+import type { RecordPoint } from "../../../shared/types";
 import { findMatches, type Reference, type LoadCategory } from "./matching";
 import { parseMeta, deriveMeta, META_VERSION } from "../meta";
+import { computeKmSplits } from "../../../shared/splits";
 
 export const TOOL_DEFINITIONS = [
   {
@@ -39,7 +41,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "get_activity",
     description:
-      "Fetch the full parsed JSON for one activity (laps, segments, records). Always returns the workout label and elevation aggregates; use `parts` to exclude heavy sections.",
+      "Fetch the full parsed JSON for one activity (laps, segments, 1km splits, records). Always returns the workout label and elevation aggregates; use `parts` to exclude heavy sections. `splits` are uniform 1km chunks summarized from the record stream — use them when laps are manual/uneven and you still need per-kilometer pace, HR, and dynamics.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -47,8 +49,8 @@ export const TOOL_DEFINITIONS = [
         id: { type: "string" },
         parts: {
           type: "array",
-          items: { enum: ["summary", "laps", "segments", "records"] },
-          description: "Which sections to include; default: summary + laps + segments.",
+          items: { enum: ["summary", "laps", "segments", "splits", "records"] },
+          description: "Which sections to include; default: summary + laps + segments + splits.",
         },
       },
     },
@@ -176,7 +178,7 @@ async function getActivity(
   const id = String(args.id ?? "");
   if (!id) throw new Error("id required");
   const partsIn = Array.isArray(args.parts) ? (args.parts as string[]) : null;
-  const parts = new Set(partsIn ?? ["summary", "laps", "segments"]);
+  const parts = new Set(partsIn ?? ["summary", "laps", "segments", "splits"]);
 
   const row = await env.DB.prepare(
     `SELECT json_r2_key, file_name, workout_type, meta
@@ -213,6 +215,10 @@ async function getActivity(
   if (parts.has("summary")) out.summary = full.summary;
   if (parts.has("laps")) out.laps = full.laps;
   if (parts.has("segments")) out.segments = full.segments;
+  if (parts.has("splits")) {
+    const records = Array.isArray(full.records) ? (full.records as RecordPoint[]) : [];
+    out.splits = computeKmSplits(records);
+  }
   if (parts.has("records")) out.records = full.records;
 
   const tagRows = await env.DB.prepare(
