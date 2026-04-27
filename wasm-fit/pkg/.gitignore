@@ -1,0 +1,3 @@
+# Track wasm-pack output so consumers don't need a Rust toolchain.
+# Regenerate via `npm run wasm:build`.
+package.json
