@@ -6,6 +6,7 @@ import {
   synthesizeRecords,
   buildExtensionLaps,
 } from "../frontend/synthesizeExtension";
+import { elevationFromRecords } from "../shared/elevation";
 import type { LapSummary, RecordPoint } from "../frontend/types";
 
 function makeRecords(count: number, startLat = 51.11, startLng = 17.05): RecordPoint[] {
@@ -397,6 +398,80 @@ describe("synthesizeRecords", () => {
     expect(synStride).toBeLessThan(srcStride * 3);
     expect(synPower).toBeLessThan(srcPower * 3);
     expect(synVR).toBeLessThan(srcVR * 3);
+  });
+
+  it("follows the terrain elevation profile when one is supplied", () => {
+    // Source records on flat ground at altitude 100m. Extension route goes
+    // up a hill: 30m climb over ~1.1km. Synthetic altitudes should track
+    // the climb so totalAscent reflects it — instead of staying pinned at
+    // the last recorded altitude (the pre-fix behavior).
+    const existing = makeRecords(300);
+    // Override altitudes to a clean flat baseline so we can isolate the
+    // extension's contribution to ascent.
+    for (const r of existing) r.altitude = 100;
+    const lastReal = existing[existing.length - 1];
+
+    // Build a north-bound path with a steady 30m climb.
+    const path: [number, number][] = [];
+    const elevations: number[] = [];
+    const STEPS = 50;
+    for (let i = 0; i <= STEPS; i++) {
+      const t = i / STEPS;
+      path.push([lastReal.lat! + 0.01 * t, lastReal.lng!]);
+      elevations.push(80 + 30 * t); // DEM baseline 80m, +30m by the end
+    }
+
+    const synthetic = synthesizeRecords({
+      existingRecords: existing,
+      waypoints: [path[0], path[path.length - 1]],
+      totalFinishTimeSeconds: lastReal.elapsed + 350,
+      path,
+      pathElevations: elevations,
+    });
+
+    // First synthetic altitude should hand off smoothly from the runner's
+    // last real altitude (100m), regardless of the DEM baseline (80m).
+    expect(synthetic[0].altitude!).toBeGreaterThan(95);
+    expect(synthetic[0].altitude!).toBeLessThan(105);
+
+    // Last synthetic altitude should reflect the climb: ~100m + 30m = ~130m.
+    const lastSynth = synthetic[synthetic.length - 1].altitude!;
+    expect(lastSynth).toBeGreaterThan(125);
+    expect(lastSynth).toBeLessThan(135);
+
+    // Smoothed ascent over the synth records should land near the
+    // ~30m climb, well above the ~0m the legacy drift generator produced.
+    const elev = elevationFromRecords(synthetic);
+    expect(elev.ascent).not.toBeNull();
+    expect(elev.ascent!).toBeGreaterThan(20);
+    expect(elev.descent!).toBeLessThan(5);
+  });
+
+  it("ignores a mismatched elevation profile and falls back to drift", () => {
+    // Profile length doesn't match the path — must be rejected to avoid
+    // wild parallel-index misalignment, and synthesis should still work.
+    const existing = makeRecords(300);
+    const lastReal = existing[existing.length - 1];
+
+    const path: [number, number][] = [
+      [lastReal.lat! + 0.001, lastReal.lng!],
+      [lastReal.lat! + 0.005, lastReal.lng!],
+    ];
+
+    const synthetic = synthesizeRecords({
+      existingRecords: existing,
+      waypoints: [path[0], path[path.length - 1]],
+      totalFinishTimeSeconds: lastReal.elapsed + 200,
+      path,
+      pathElevations: [80, 90, 100, 110], // wrong length
+    });
+
+    expect(synthetic.length).toBeGreaterThan(50);
+    // Drift behavior: altitudes stay close to the source's last value.
+    for (const r of synthetic) {
+      expect(r.altitude!).toBeGreaterThan(115);
+      expect(r.altitude!).toBeLessThan(125);
+    }
   });
 
   it("synthetic HR blends smoothly from last real HR (no jump)", () => {

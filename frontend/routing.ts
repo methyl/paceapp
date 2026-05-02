@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { fetchElevations } from "./elevationLookup";
 
 // OSRM demo server run by FOSSGIS — follows roads AND footpaths/trails
 // via OSM's `foot` profile (same backend used by openstreetmap.org directions).
@@ -9,6 +10,10 @@ export interface SnappedRoute {
   coordinates: [number, number][];
   /** Total road/trail distance in meters. */
   distance: number;
+  /** Terrain elevation (m) parallel to `coordinates`, from a DEM lookup.
+   *  Null when the elevation service is unreachable — synthesis then falls
+   *  back to flat drift around the runner's last altitude. */
+  elevations: number[] | null;
 }
 
 export async function fetchFootRoute(
@@ -31,7 +36,13 @@ export async function fetchFootRoute(
   const coordinates: [number, number][] = route.geometry.coordinates.map(
     ([lng, lat]: [number, number]) => [lat, lng] as [number, number],
   );
-  return { coordinates, distance: route.distance };
+
+  // Best-effort elevation lookup. Don't fail the whole route if the DEM
+  // service is down — the caller can synthesize without it, just with the
+  // legacy flat-altitude behavior.
+  const elevations = await fetchElevations(coordinates, signal);
+
+  return { coordinates, distance: route.distance, elevations };
 }
 
 function waypointsKey(wp: [number, number][]): string {
