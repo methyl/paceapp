@@ -3,6 +3,7 @@ import type { ParsedActivity } from "../types";
 import { buildExtensionLaps, haversineDistance, synthesizeRecords } from "../synthesizeExtension";
 import { formatTime, paceFromDistanceTime, speedFromDistanceTime } from "../../shared/pace";
 import type { SnappedRoute } from "../routing";
+import { fetchElevations } from "../elevationLookup";
 
 interface RunExtensionProps {
   activity: ParsedActivity;
@@ -227,7 +228,7 @@ export default function RunExtension({
     const originalRecs = activity.records.slice(0, origRecCount);
     const syntheticOld = activity.records.slice(origRecCount);
 
-    const handleRecalculate = () => {
+    const handleRecalculate = async () => {
       if (syntheticOld.length < 2 || originalRecs.length === 0) return;
       const routeRecords = syntheticOld.filter(
         (r) => r.lat != null && r.lng != null,
@@ -237,20 +238,27 @@ export default function RunExtension({
       );
       if (route.length < 2) return;
 
-      // Reuse the previous extension's terrain altitudes as the elevation
-      // profile so recalculate gives the same hill the runner climbed first
-      // time around — without re-hitting the DEM service.
-      const elevs = routeRecords.map((r) => r.altitude);
-      const routeElevations = elevs.every(
-        (a): a is number => typeof a === "number" && Number.isFinite(a),
-      )
-        ? (elevs as number[])
-        : undefined;
-
       const lastOrig = originalRecs[originalRecs.length - 1];
       const lastSynth = syntheticOld[syntheticOld.length - 1];
       const finishTime = lastSynth.elapsed;
       if (finishTime <= lastOrig.elapsed) return;
+
+      // Re-fetch the DEM profile for the route. If the elevation service is
+      // unreachable, fall back to the previously synthesized altitudes so
+      // recalculate degrades to the legacy behavior rather than producing a
+      // flat-altitude extension.
+      const fresh = await fetchElevations(route);
+      let routeElevations: number[] | undefined;
+      if (fresh && fresh.length === route.length) {
+        routeElevations = fresh;
+      } else {
+        const fallback = routeRecords.map((r) => r.altitude);
+        if (fallback.every(
+          (a): a is number => typeof a === "number" && Number.isFinite(a),
+        )) {
+          routeElevations = fallback as number[];
+        }
+      }
 
       const newSynth = synthesizeRecords({
         existingRecords: originalRecs,
