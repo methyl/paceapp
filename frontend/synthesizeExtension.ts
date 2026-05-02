@@ -621,8 +621,15 @@ export function synthesizeRecords(params: {
   totalFinishTimeSeconds: number;
   /** Optional road/trail-snapped polyline — used instead of straight-line waypoints. */
   path?: [number, number][];
+  /** Terrain elevation (m) parallel to `path`. When provided, synthetic
+   *  altitude is interpolated along the route's real terrain profile so
+   *  ascent/descent reflect the extension. Without it, altitude is flat
+   *  noise around the last recorded value. */
+  pathElevations?: number[] | null;
 }): RecordPoint[] {
-  const { existingRecords, waypoints, totalFinishTimeSeconds, path } = params;
+  const {
+    existingRecords, waypoints, totalFinishTimeSeconds, path, pathElevations,
+  } = params;
 
   if (existingRecords.length === 0 || waypoints.length < 2) return [];
 
@@ -634,6 +641,12 @@ export function synthesizeRecords(params: {
   // Use the snapped road/trail path when available so synthetic GPS follows
   // actual routes rather than cutting across buildings.
   const routeLine = path && path.length >= 2 ? path : waypoints;
+  // Only honor an elevation profile when its length matches the route line
+  // it was sampled against — otherwise the parallel indexing breaks.
+  const haveElevations =
+    Array.isArray(pathElevations) &&
+    pathElevations.length === routeLine.length &&
+    routeLine.length >= 2;
 
   // Cumulative distance along the route so we can place records by distance.
   const routeCum: number[] = [0];
@@ -656,9 +669,12 @@ export function synthesizeRecords(params: {
   const targetSpeedForTrend = totalRouteDist / extensionDuration;
   const trend = analyzePaceMatchedTrend(existingRecords, targetSpeedForTrend);
 
-  const positionAt = (d: number): [number, number] => {
-    if (d <= 0) return routeLine[0];
-    if (d >= totalRouteDist) return routeLine[routeLine.length - 1];
+  const segmentAt = (d: number): { lo: number; hi: number; t: number } => {
+    if (d <= 0) return { lo: 0, hi: Math.min(1, routeCum.length - 1), t: 0 };
+    if (d >= totalRouteDist) {
+      const last = routeCum.length - 1;
+      return { lo: Math.max(0, last - 1), hi: last, t: 1 };
+    }
     let lo = 0;
     let hi = routeCum.length - 1;
     while (hi - lo > 1) {
@@ -667,12 +683,33 @@ export function synthesizeRecords(params: {
       else hi = mid;
     }
     const span = routeCum[hi] - routeCum[lo] || 1;
-    const t = (d - routeCum[lo]) / span;
+    return { lo, hi, t: (d - routeCum[lo]) / span };
+  };
+
+  const positionAt = (d: number): [number, number] => {
+    const { lo, hi, t } = segmentAt(d);
     return [
       routeLine[lo][0] + (routeLine[hi][0] - routeLine[lo][0]) * t,
       routeLine[lo][1] + (routeLine[hi][1] - routeLine[lo][1]) * t,
     ];
   };
+
+  // Interpolate terrain altitude along the route's elevation profile.
+  // Smooth handoff from the last real altitude is preserved by offsetting
+  // the entire profile so its first sample equals the runner's last
+  // observed altitude — DEM and watch barometer can disagree by several
+  // meters at the same point, and a step there would invent fake ascent.
+  let elevationAt: ((d: number) => number) | null = null;
+  if (haveElevations) {
+    const profile = pathElevations as number[];
+    const lastAlt = trend.altitude.count > 0 ? trend.altitude.last : profile[0];
+    const altOffset = lastAlt - profile[0];
+    elevationAt = (d: number): number => {
+      const { lo, hi, t } = segmentAt(d);
+      const base = profile[lo] + (profile[hi] - profile[lo]) * t;
+      return base + altOffset;
+    };
+  }
 
   const dt = trend.recordInterval;
   const targetSpeed = targetSpeedForTrend;
@@ -734,9 +771,17 @@ export function synthesizeRecords(params: {
   const powerGen = createAR1(
     trend.power.mean, trend.power.std, Math.max(trend.power.alpha, 0.9), trend.power.last,
   );
-  // Altitude: tiny drift around the last known value; real terrain is unknown.
-  const altStd = trend.altitude.std > 0 ? Math.min(trend.altitude.std, 1) : 0.2;
-  const altGen = createAR1(trend.altitude.last, altStd, 0.98, trend.altitude.last);
+  // Altitude noise: with a real terrain profile we layer a small AR(1)
+  // jitter on top to mimic GPS/barometer scatter (~0.3m). Without one,
+  // fall back to a drift around the last known altitude — the legacy
+  // behavior — so flat-terrain runs still synthesize reasonably.
+  const altJitterStd = elevationAt ? 0.3 : (
+    trend.altitude.std > 0 ? Math.min(trend.altitude.std, 1) : 0.2
+  );
+  const altJitterGen = createAR1(0, altJitterStd, 0.98, 0);
+  const altDriftGen = elevationAt
+    ? null
+    : createAR1(trend.altitude.last, altJitterStd, 0.98, trend.altitude.last);
 
   // First pass: noisy step distances, then scale so the total matches the route.
   const stepDists: number[] = new Array(numRecords);
@@ -824,11 +869,18 @@ export function synthesizeRecords(params: {
       ? Math.round(clamp(powerGen(), powerMin, powerMax))
       : undefined;
 
+    let altitude: number | undefined;
+    if (elevationAt) {
+      altitude = +(elevationAt(cumDistance) + altJitterGen()).toFixed(1);
+    } else if (trend.altitude.count > 0 && altDriftGen) {
+      altitude = +altDriftGen().toFixed(1);
+    }
+
     result.push({
       timestamp,
       elapsed,
       distance: Math.round((last.distance + cumDistance) * 100) / 100,
-      altitude: trend.altitude.count > 0 ? +altGen().toFixed(1) : undefined,
+      altitude,
       lat,
       lng,
       heartRate: hr,

@@ -165,6 +165,7 @@ export default function RunExtension({
       waypoints,
       totalFinishTimeSeconds: finishTime,
       path: snappedRoute?.coordinates,
+      pathElevations: snappedRoute?.elevations,
     });
 
     if (synthetic.length === 0) {
@@ -228,10 +229,23 @@ export default function RunExtension({
 
     const handleRecalculate = () => {
       if (syntheticOld.length < 2 || originalRecs.length === 0) return;
-      const route = syntheticOld
-        .filter((r) => r.lat != null && r.lng != null)
-        .map((r) => [r.lat!, r.lng!] as [number, number]);
+      const routeRecords = syntheticOld.filter(
+        (r) => r.lat != null && r.lng != null,
+      );
+      const route = routeRecords.map(
+        (r) => [r.lat!, r.lng!] as [number, number],
+      );
       if (route.length < 2) return;
+
+      // Reuse the previous extension's terrain altitudes as the elevation
+      // profile so recalculate gives the same hill the runner climbed first
+      // time around — without re-hitting the DEM service.
+      const elevs = routeRecords.map((r) => r.altitude);
+      const routeElevations = elevs.every(
+        (a): a is number => typeof a === "number" && Number.isFinite(a),
+      )
+        ? (elevs as number[])
+        : undefined;
 
       const lastOrig = originalRecs[originalRecs.length - 1];
       const lastSynth = syntheticOld[syntheticOld.length - 1];
@@ -243,6 +257,7 @@ export default function RunExtension({
         waypoints: [route[0], route[route.length - 1]],
         totalFinishTimeSeconds: finishTime,
         path: route,
+        pathElevations: routeElevations,
       });
       if (newSynth.length === 0) return;
 
